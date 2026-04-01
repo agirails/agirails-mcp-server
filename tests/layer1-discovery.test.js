@@ -7,12 +7,13 @@
  * network calls or a private key.
  */
 
-import { test, describe, mock } from 'node:test';
+import { test, describe, mock, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   formatUSDC,
   formatAgentCard,
   FIND_AGENTS_SCHEMA,
+  findAgents,
 } from '../dist/tools/layer1-discovery.js';
 
 // ── formatUSDC ────────────────────────────────────────────────────────────────
@@ -174,5 +175,201 @@ describe('FIND_AGENTS_SCHEMA', () => {
   test('rejects limit of 0', () => {
     const result = FIND_AGENTS_SCHEMA.safeParse({ limit: 0 });
     assert.ok(!result.success);
+  });
+});
+
+// ── findAgents — AgentRegistry execution paths ────────────────────────────────
+
+const MOCK_ADDR_1 = '0x0000000000000000000000000000000000000001';
+const MOCK_ADDR_2 = '0x0000000000000000000000000000000000000002';
+
+const MOCK_REGISTRY_PROFILE_1 = {
+  agentAddress: MOCK_ADDR_1,
+  did: 'did:ethr:8453:0x0001',
+  endpoint: 'https://translator.example.com',
+  reputationScore: 9500,
+  totalTransactions: 42,
+  isActive: true,
+};
+
+const MOCK_REGISTRY_SERVICES_1 = [
+  {
+    serviceType: 'translation',
+    schemaURI: 'ipfs://QmHash',
+    minPrice: 1_000_000n,
+    maxPrice: 5_000_000n,
+    avgCompletionTime: 30,
+  },
+];
+
+/** Build a mock AgentRegistryLike that the registryFactory can return. */
+function buildMockRegistry({
+  addresses = [MOCK_ADDR_1],
+  profile = MOCK_REGISTRY_PROFILE_1,
+  services = MOCK_REGISTRY_SERVICES_1,
+  queryError = null,
+} = {}) {
+  return {
+    computeServiceTypeHash: (serviceType) =>
+      '0x' + Buffer.from(serviceType).toString('hex').padEnd(64, '0'),
+    queryAgentsByService: async (_params) => {
+      if (queryError) throw queryError;
+      return addresses;
+    },
+    getAgent: async (addr) => (addr === MOCK_ADDR_1 ? profile : null),
+    getServiceDescriptors: async (addr) => (addr === MOCK_ADDR_1 ? services : []),
+  };
+}
+
+describe('findAgents() — capability path (AgentRegistry-backed)', () => {
+  test('returns formatted agent card for capability query', async () => {
+    const registry = buildMockRegistry();
+    const result = await findAgents(
+      { capability: 'translation', limit: 10, network: 'base-mainnet' },
+      () => registry,
+    );
+    assert.ok(result.includes('AGIRAILS Agent Registry'), `header missing in: ${result}`);
+    assert.ok(result.includes('did:ethr:8453:0x0001'), `DID missing in: ${result}`);
+    assert.ok(result.includes('translation'), `service type missing in: ${result}`);
+  });
+
+  test('applies keyword filter when both capability and keyword are given', async () => {
+    const registry = buildMockRegistry({
+      addresses: [MOCK_ADDR_1, MOCK_ADDR_2],
+      profile: MOCK_REGISTRY_PROFILE_1,
+      services: MOCK_REGISTRY_SERVICES_1,
+    });
+    // ADDR_2 resolves to null profile so only ADDR_1 card is produced;
+    // keyword 'translator' matches the endpoint in the card
+    const result = await findAgents(
+      { capability: 'translation', keyword: 'translator', limit: 10, network: 'base-mainnet' },
+      () => registry,
+    );
+    assert.ok(result.includes('translator.example.com'), `keyword match missing in: ${result}`);
+  });
+
+  test('returns no-match message when keyword filters out all results', async () => {
+    const registry = buildMockRegistry();
+    const result = await findAgents(
+      { capability: 'translation', keyword: 'zzznomatch', limit: 10, network: 'base-mainnet' },
+      () => registry,
+    );
+    assert.ok(result.includes('No agents matched'), `expected no-match message in: ${result}`);
+  });
+
+  test('returns no-agents message when registry returns empty list', async () => {
+    const registry = buildMockRegistry({ addresses: [] });
+    const result = await findAgents(
+      { capability: 'translation', limit: 10, network: 'base-mainnet' },
+      () => registry,
+    );
+    assert.ok(result.includes('No agents found'), `expected no-agents message in: ${result}`);
+  });
+
+  test('falls through to empty when QueryCapExceededError is thrown', async () => {
+    const capError = new Error('Too many agents');
+    capError.constructor = { name: 'QueryCapExceededError' };
+    Object.defineProperty(capError, 'constructor', { value: { name: 'QueryCapExceededError' } });
+    // Simulate the SDK error by name
+    class QueryCapExceededError extends Error {
+      constructor() { super('Too many agents'); this.name = 'QueryCapExceededError'; }
+    }
+    const registry = buildMockRegistry({ queryError: new QueryCapExceededError() });
+    const result = await findAgents(
+      { capability: 'translation', limit: 10, network: 'base-mainnet' },
+      () => registry,
+    );
+    assert.ok(result.includes('No agents found'), `expected fallback message in: ${result}`);
+  });
+
+  test('rethrows non-QueryCapExceededError from queryAgentsByService', async () => {
+    const registry = buildMockRegistry({ queryError: new Error('RPC connection failed') });
+    await assert.rejects(
+      () => findAgents({ capability: 'translation', limit: 10, network: 'base-mainnet' }, () => registry),
+      /RPC connection failed/,
+    );
+  });
+
+  test('returns could-not-load-profiles message when all getAgent calls return null', async () => {
+    const registry = buildMockRegistry({ profile: null });
+    const result = await findAgents(
+      { capability: 'translation', limit: 10, network: 'base-mainnet' },
+      () => registry,
+    );
+    assert.ok(result.includes('could not load profiles'), `expected profile-load error in: ${result}`);
+  });
+
+  test('returns registry-connect error when registryFactory throws', async () => {
+    const result = await findAgents(
+      { capability: 'translation', limit: 10, network: 'base-mainnet' },
+      () => { throw new Error('no RPC endpoint'); },
+    );
+    assert.ok(result.includes('Could not connect'), `expected connect-error in: ${result}`);
+  });
+});
+
+describe('findAgents() — keyword-only path (REST discover API)', () => {
+  let originalFetch;
+
+  beforeEach(() => {
+    originalFetch = globalThis.fetch;
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  test('returns formatted discover cards for keyword-only query', async () => {
+    globalThis.fetch = async (url) => ({
+      ok: true,
+      json: async () => ({
+        agents: [
+          {
+            slug: 'my-translator',
+            published_config: {
+              name: 'My Translator',
+              description: 'Translates text',
+              capabilities: ['translation'],
+              pricing: { amount: 1.5, currency: 'USDC' },
+            },
+          },
+        ],
+        total: 1,
+      }),
+    });
+    const result = await findAgents({ keyword: 'translation', limit: 10, network: 'base-mainnet' });
+    assert.ok(result.includes('My Translator'), `agent name missing in: ${result}`);
+    assert.ok(result.includes('my-translator'), `slug missing in: ${result}`);
+  });
+
+  test('returns no-agents message when discover API returns empty list', async () => {
+    globalThis.fetch = async () => ({
+      ok: true,
+      json: async () => ({ agents: [], total: 0 }),
+    });
+    const result = await findAgents({ keyword: 'nonexistent', limit: 10, network: 'base-mainnet' });
+    assert.ok(result.includes('No agents found for keyword'), `expected no-agents message in: ${result}`);
+  });
+
+  test('returns error message when discover API returns non-200', async () => {
+    globalThis.fetch = async () => ({ ok: false, status: 503 });
+    const result = await findAgents({ keyword: 'translation', limit: 10, network: 'base-mainnet' });
+    assert.ok(result.includes('503') || result.includes('discovery API'), `expected API error in: ${result}`);
+  });
+
+  test('returns error message when fetch throws (network error)', async () => {
+    globalThis.fetch = async () => { throw new Error('ECONNREFUSED'); };
+    const result = await findAgents({ keyword: 'translation', limit: 10, network: 'base-mainnet' });
+    assert.ok(result.includes('Could not reach') || result.includes('ECONNREFUSED'), `expected network error in: ${result}`);
+  });
+});
+
+describe('findAgents() — no search term', () => {
+  test('returns prompt when neither capability nor keyword is given', async () => {
+    const result = await findAgents({ limit: 10, network: 'base-mainnet' });
+    assert.ok(
+      result.includes('capability') && result.includes('keyword'),
+      `expected guidance message in: ${result}`,
+    );
   });
 });
