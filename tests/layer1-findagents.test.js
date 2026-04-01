@@ -6,7 +6,7 @@
 
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { findAgents } from '../dist/tools/layer1-discovery.js';
+import { findAgents, DiscoverBackendError } from '../dist/tools/layer1-discovery.js';
 
 // ── Mock helpers ──────────────────────────────────────────────────────────────
 
@@ -231,6 +231,58 @@ describe('findAgents() — keyword-only path', () => {
       (networkName) => { capturedNetwork = networkName; return makeRegistry({ keywordAddresses: [] }); },
     );
     assert.equal(capturedNetwork, 'base-sepolia', 'should pass network to registry factory');
+  });
+
+  test('returns backend-unavailable message when discover API returns HTTP 500', async () => {
+    const registry = makeRegistry();
+    registry.findAgentsByKeyword = async () => {
+      throw new DiscoverBackendError(500, 'discover API returned HTTP 500');
+    };
+    const result = await findAgents(
+      { keyword: 'translator', limit: 5, network: 'base-mainnet' },
+      () => registry,
+    );
+    assert.ok(result.includes('discover backend is currently unavailable'), 'should report backend unavailable');
+    assert.ok(result.includes('HTTP 500'), 'should include HTTP status');
+    assert.ok(!result.includes('No agents found'), 'must not mislead with no-agents message');
+  });
+
+  test('returns backend-unavailable message when discover API returns HTTP 503', async () => {
+    const registry = makeRegistry();
+    registry.findAgentsByKeyword = async () => {
+      throw new DiscoverBackendError(503, 'discover API returned HTTP 503');
+    };
+    const result = await findAgents(
+      { keyword: 'escrow', limit: 5, network: 'base-mainnet' },
+      () => registry,
+    );
+    assert.ok(result.includes('discover backend is currently unavailable'), 'should report backend unavailable');
+    assert.ok(result.includes('HTTP 503'), 'should include HTTP status');
+    assert.ok(!result.includes('No agents found'), 'must not mislead with no-agents message');
+  });
+
+  test('returns backend-unavailable message on network error (status 0)', async () => {
+    const registry = makeRegistry();
+    registry.findAgentsByKeyword = async () => {
+      throw new DiscoverBackendError(0, 'fetch failed');
+    };
+    const result = await findAgents(
+      { keyword: 'translator', limit: 5, network: 'base-mainnet' },
+      () => registry,
+    );
+    assert.ok(result.includes('discover backend is currently unavailable'), 'should report backend unavailable');
+    assert.ok(!result.includes('No agents found'), 'must not mislead with no-agents message');
+  });
+
+  test('rethrows non-DiscoverBackendError from findAgentsByKeyword', async () => {
+    const registry = makeRegistry();
+    registry.findAgentsByKeyword = async () => {
+      throw new Error('unexpected internal error');
+    };
+    await assert.rejects(
+      () => findAgents({ keyword: 'translator', limit: 5, network: 'base-mainnet' }, () => registry),
+      /unexpected internal error/,
+    );
   });
 });
 

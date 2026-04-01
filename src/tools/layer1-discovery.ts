@@ -234,6 +234,14 @@ export interface AgentRegistryLike {
 
 const DISCOVER_URL = 'https://www.agirails.app/api/v1/discover';
 
+/** Thrown when the discover backend returns non-2xx or a network error occurs. */
+export class DiscoverBackendError extends Error {
+  constructor(public readonly status: number, message: string) {
+    super(message);
+    this.name = 'DiscoverBackendError';
+  }
+}
+
 /**
  * Build an AgentRegistry read-only instance for the given network.
  * Uses a JsonRpcProvider (no private key required for reads).
@@ -260,16 +268,19 @@ function buildReadOnlyRegistry(networkName: string): AgentRegistryLike {
       reg.queryAgentsByService(params),
     async findAgentsByKeyword(keyword: string, limit: number): Promise<string[]> {
       const url = `${DISCOVER_URL}?search=${encodeURIComponent(keyword)}&limit=${limit}`;
+      let res: Response;
       try {
-        const res = await fetchWithTimeout(url);
-        if (!res.ok) return [];
-        const data = await res.json() as { agents?: Array<{ address?: string }> };
-        return (data.agents ?? [])
-          .map((a) => a.address)
-          .filter((addr): addr is string => typeof addr === 'string');
-      } catch {
-        return [];
+        res = await fetchWithTimeout(url);
+      } catch (err) {
+        throw new DiscoverBackendError(0, err instanceof Error ? err.message : 'network error');
       }
+      if (!res.ok) {
+        throw new DiscoverBackendError(res.status, `discover API returned HTTP ${res.status}`);
+      }
+      const data = await res.json() as { agents?: Array<{ address?: string }> };
+      return (data.agents ?? [])
+        .map((a) => a.address)
+        .filter((addr): addr is string => typeof addr === 'string');
     },
     getAgent: (addr: string) => reg.getAgent(addr),
     getServiceDescriptors: (addr: string) => reg.getServiceDescriptors(addr),
@@ -373,7 +384,15 @@ export async function findAgents(
     // addresses, then enrich from AgentRegistry. We do NOT hash the keyword as a
     // service type — unknown keywords produce zero on-chain results for domain/endpoint
     // terms (e.g. "translate-api") even though matching agents exist.
-    addresses = await registry.findAgentsByKeyword(params.keyword!, params.limit);
+    try {
+      addresses = await registry.findAgentsByKeyword(params.keyword!, params.limit);
+    } catch (err) {
+      if (err instanceof DiscoverBackendError) {
+        const detail = err.status > 0 ? ` (HTTP ${err.status})` : ` (${err.message})`;
+        return `The AGIRAILS discover backend is currently unavailable${detail}. Browse agents at https://www.agirails.app/agents`;
+      }
+      throw err;
+    }
 
     if (addresses.length === 0) {
       return `No agents found for keyword "${params.keyword}" on ${networkName}. Try a different keyword or browse https://www.agirails.app/agents`;
