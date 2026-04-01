@@ -7,7 +7,7 @@
  * network calls or a private key.
  */
 
-import { test, describe, mock, beforeEach, afterEach } from 'node:test';
+import { test, describe, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   formatUSDC,
@@ -308,59 +308,45 @@ describe('findAgents() — capability path (AgentRegistry-backed)', () => {
   });
 });
 
-describe('findAgents() — keyword-only path (REST discover API)', () => {
-  let originalFetch;
+describe('findAgents() — keyword-only path (AgentRegistry-backed)', () => {
+  test('routes keyword-only query through AgentRegistry using keyword as service type', async () => {
+    let capturedServiceType = '';
+    const registry = buildMockRegistry();
+    const origHash = registry.computeServiceTypeHash.bind(registry);
+    registry.computeServiceTypeHash = (s) => { capturedServiceType = s; return origHash(s); };
 
-  beforeEach(() => {
-    originalFetch = globalThis.fetch;
+    const result = await findAgents(
+      { keyword: 'translation', limit: 10, network: 'base-mainnet' },
+      () => registry,
+    );
+    assert.equal(capturedServiceType, 'translation', 'keyword should be passed as service type');
+    assert.ok(result.includes('AGIRAILS Agent Registry'), `expected registry header in: ${result}`);
+    assert.ok(result.includes('translation'), `header should mention keyword in: ${result}`);
   });
 
-  afterEach(() => {
-    globalThis.fetch = originalFetch;
-  });
-
-  test('returns formatted discover cards for keyword-only query', async () => {
-    globalThis.fetch = async (url) => ({
-      ok: true,
-      json: async () => ({
-        agents: [
-          {
-            slug: 'my-translator',
-            published_config: {
-              name: 'My Translator',
-              description: 'Translates text',
-              capabilities: ['translation'],
-              pricing: { amount: 1.5, currency: 'USDC' },
-            },
-          },
-        ],
-        total: 1,
-      }),
-    });
-    const result = await findAgents({ keyword: 'translation', limit: 10, network: 'base-mainnet' });
-    assert.ok(result.includes('My Translator'), `agent name missing in: ${result}`);
-    assert.ok(result.includes('my-translator'), `slug missing in: ${result}`);
-  });
-
-  test('returns no-agents message when discover API returns empty list', async () => {
-    globalThis.fetch = async () => ({
-      ok: true,
-      json: async () => ({ agents: [], total: 0 }),
-    });
-    const result = await findAgents({ keyword: 'nonexistent', limit: 10, network: 'base-mainnet' });
+  test('returns no-agents message when registry returns empty list for keyword', async () => {
+    const registry = buildMockRegistry({ addresses: [] });
+    const result = await findAgents({ keyword: 'nonexistent', limit: 10, network: 'base-mainnet' }, () => registry);
     assert.ok(result.includes('No agents found for keyword'), `expected no-agents message in: ${result}`);
+    assert.ok(result.includes('nonexistent'), `should mention keyword in: ${result}`);
   });
 
-  test('returns error message when discover API returns non-200', async () => {
-    globalThis.fetch = async () => ({ ok: false, status: 503 });
-    const result = await findAgents({ keyword: 'translation', limit: 10, network: 'base-mainnet' });
-    assert.ok(result.includes('503') || result.includes('discovery API'), `expected API error in: ${result}`);
+  test('returns connect-error message when registry factory throws for keyword path', async () => {
+    const result = await findAgents(
+      { keyword: 'translation', limit: 10, network: 'base-mainnet' },
+      () => { throw new Error('not deployed on this network'); },
+    );
+    assert.ok(result.includes('Could not connect'), `expected connect-error in: ${result}`);
+    assert.ok(result.includes('not deployed on this network'), `should include error text in: ${result}`);
   });
 
-  test('returns error message when fetch throws (network error)', async () => {
-    globalThis.fetch = async () => { throw new Error('ECONNREFUSED'); };
-    const result = await findAgents({ keyword: 'translation', limit: 10, network: 'base-mainnet' });
-    assert.ok(result.includes('Could not reach') || result.includes('ECONNREFUSED'), `expected network error in: ${result}`);
+  test('preserves network selection in keyword-only path', async () => {
+    let capturedNetwork = '';
+    const result = await findAgents(
+      { keyword: 'translation', limit: 5, network: 'base-sepolia' },
+      (networkName) => { capturedNetwork = networkName; return buildMockRegistry({ addresses: [] }); },
+    );
+    assert.equal(capturedNetwork, 'base-sepolia', 'should pass network to registry factory');
   });
 });
 

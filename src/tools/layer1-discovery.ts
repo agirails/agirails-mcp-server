@@ -42,7 +42,6 @@ export const EXPLAIN_CONCEPT_SCHEMA = z.object({
 const SEARCH_BASE_URL = 'https://www.agirails.app/api/v1/search';
 const AGENT_CARD_BASE_URL = 'https://www.agirails.app/a';
 const PROTOCOL_SPEC_URL = 'https://www.agirails.app/protocol/AGIRAILS.md';
-const DISCOVER_URL = 'https://www.agirails.app/api/v1/discover';
 
 function fetchWithTimeout(url: string, timeoutMs = 10000): Promise<Response> {
   const controller = new AbortController();
@@ -230,53 +229,6 @@ export interface AgentRegistryLike {
   }>>;
 }
 
-interface DiscoverApiAgent {
-  slug: string;
-  published_config?: {
-    name?: string;
-    description?: string;
-    capabilities?: string[];
-    pricing?: { amount?: number; currency?: string };
-    payment_mode?: string;
-  };
-}
-
-function formatDiscoverCard(agent: DiscoverApiAgent, idx: number): string {
-  const cfg = agent.published_config;
-  const lines = [
-    `**[${idx}] ${cfg?.name ?? agent.slug}** — \`${agent.slug}\``,
-    `- Profile: https://www.agirails.app/a/${agent.slug}`,
-  ];
-  if (cfg?.description) lines.push(`- Description: ${cfg.description}`);
-  if (cfg?.capabilities?.length) lines.push(`- Capabilities: ${cfg.capabilities.join(', ')}`);
-  if (cfg?.pricing?.amount != null) {
-    const cur = cfg.pricing.currency ?? 'USDC';
-    lines.push(`- Price: ${cfg.pricing.amount.toFixed(2)} ${cur}`);
-  }
-  if (cfg?.payment_mode) lines.push(`- Payment: ${cfg.payment_mode}`);
-  return lines.join('\n');
-}
-
-async function discoverByKeyword(keyword: string, limit: number): Promise<string> {
-  const url = `${DISCOVER_URL}?search=${encodeURIComponent(keyword)}&limit=${limit}`;
-  let res: Response;
-  try {
-    res = await fetchWithTimeout(url);
-  } catch (err) {
-    return `Could not reach AGIRAILS discovery API: ${err instanceof Error ? err.message : String(err)}. Browse agents at https://www.agirails.app/agents`;
-  }
-  if (!res.ok) {
-    return `AGIRAILS discovery API returned ${res.status}. Browse agents at https://www.agirails.app/agents`;
-  }
-  const data = await res.json() as { agents: DiscoverApiAgent[]; total: number };
-  if (!data.agents?.length) {
-    return `No agents found for keyword "${keyword}". Browse https://www.agirails.app/agents`;
-  }
-  const cards = data.agents.map((a, i) => formatDiscoverCard(a, i + 1));
-  const header = `## AGIRAILS Agent Discovery — keyword: "${keyword}"\n\nFound ${data.agents.length} of ${data.total} agent(s):\n`;
-  const footer = `\n> Use \`agirails_get_agent_card\` with an agent's slug for full details.\n> Browse all agents: https://www.agirails.app/agents`;
-  return [header, ...cards, footer].join('\n\n');
-}
 
 /**
  * Build an AgentRegistry read-only instance for the given network.
@@ -355,15 +307,14 @@ export async function findAgents(
 ): Promise<string> {
   const networkName = params.network ?? 'base-mainnet';
 
-  // Keyword-only path: no on-chain call needed — use the REST discover API
-  if (!params.capability) {
-    if (!params.keyword) {
-      return `Provide a \`capability\` (e.g. "translation") or \`keyword\` to search, or browse https://www.agirails.app/agents`;
-    }
-    return discoverByKeyword(params.keyword, params.limit);
+  // Both capability and keyword-only paths go through AgentRegistry.
+  // When only a keyword is supplied, it is treated as the service type query term.
+  const serviceType = params.capability ?? params.keyword;
+  if (!serviceType) {
+    return `Provide a \`capability\` (e.g. "translation") or \`keyword\` to search, or browse https://www.agirails.app/agents`;
   }
 
-  // Capability path: query on-chain AgentRegistry
+  // Build a read-only registry for the requested network
   let registry: AgentRegistryLike;
   try {
     registry = registryFactory(networkName);
@@ -375,7 +326,7 @@ export async function findAgents(
   let addresses: string[] = [];
 
   // Normalise: lowercase, replace spaces with hyphens
-  const normalised = params.capability.toLowerCase().replace(/\s+/g, '-');
+  const normalised = serviceType.toLowerCase().replace(/\s+/g, '-');
   const serviceTypeHash = registry.computeServiceTypeHash(normalised);
   try {
     addresses = await registry.queryAgentsByService({
@@ -390,7 +341,9 @@ export async function findAgents(
   }
 
   if (addresses.length === 0) {
-    return `No agents found for capability "${params.capability}" on ${networkName}. Try a different service type or browse https://www.agirails.app/agents`;
+    return params.capability
+      ? `No agents found for capability "${params.capability}" on ${networkName}. Try a different service type or browse https://www.agirails.app/agents`
+      : `No agents found for keyword "${params.keyword}" on ${networkName}. Try a different keyword or browse https://www.agirails.app/agents`;
   }
 
   // Resolve profiles + service descriptors (up to limit, in parallel)
@@ -417,9 +370,10 @@ export async function findAgents(
     return `Found agent addresses on ${networkName} but could not load profiles. Browse https://www.agirails.app/agents`;
   }
 
-  const keyword = params.keyword?.toLowerCase();
-  const filtered = keyword
-    ? cards.filter((c) => c.toLowerCase().includes(keyword))
+  // Apply keyword filter only when capability is also present (keyword as secondary text filter)
+  const keywordFilter = params.capability ? params.keyword?.toLowerCase() : undefined;
+  const filtered = keywordFilter
+    ? cards.filter((c) => c.toLowerCase().includes(keywordFilter))
     : cards;
 
   if (filtered.length === 0) {
