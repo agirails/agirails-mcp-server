@@ -370,8 +370,9 @@ export async function findAgents(
     return `Found agent addresses on ${networkName} but could not load profiles. Browse https://www.agirails.app/agents`;
   }
 
-  // Apply keyword filter only when capability is also present (keyword as secondary text filter)
-  const keywordFilter = params.capability ? params.keyword?.toLowerCase() : undefined;
+  // Apply keyword as free-text filter against profile/service fields (endpoint, DID, serviceType,
+  // schemaURI) for all paths — both capability+keyword and keyword-only.
+  const keywordFilter = params.keyword?.toLowerCase();
   const filtered = keywordFilter
     ? cards.filter((c) => c.toLowerCase().includes(keywordFilter))
     : cards;

@@ -128,16 +128,20 @@ describe('findAgents() — capability path', () => {
 
 // ── Keyword-only path ─────────────────────────────────────────────────────────
 // Keyword-only discovery routes through AgentRegistry (same contract as capability path).
-// The keyword is treated as the service type query term; network selection is preserved.
+// The keyword is used as the service type query term to retrieve candidate agents, then
+// applied as a free-text filter against profile/service fields (endpoint, DID, serviceType,
+// schemaURI). Network selection is preserved.
 
 describe('findAgents() — keyword-only path', () => {
-  test('queries AgentRegistry with keyword as service type and returns agent card', async () => {
+  test('queries AgentRegistry with keyword as service type and applies free-text filter on profile fields', async () => {
     let capturedHash = '';
     const registry = {
       computeServiceTypeHash(s) { capturedHash = s; return '0xdeadbeef'; },
       async queryAgentsByService(_p) { return ['0xabc123']; },
       async getAgent(addr) { return makeProfile(addr); },
-      async getServiceDescriptors(_addr) { return []; },
+      async getServiceDescriptors(_addr) {
+        return [{ serviceType: 'translator', schemaURI: undefined, minPrice: 1000000n, maxPrice: 5000000n, avgCompletionTime: 30 }];
+      },
     };
 
     const result = await findAgents(
@@ -148,7 +152,39 @@ describe('findAgents() — keyword-only path', () => {
     assert.equal(capturedHash, 'translator', 'should pass keyword to computeServiceTypeHash');
     assert.ok(result.includes('0xabc123'), 'card should include agent address');
     assert.ok(result.includes('AGIRAILS Agent Registry'), 'should have registry header');
-    assert.ok(result.includes('translator'), 'header should mention keyword');
+    assert.ok(result.includes('translator'), 'result should include keyword');
+  });
+
+  test('keyword-only filters agents by endpoint URL (free-text match)', async () => {
+    const reg = makeRegistry({ addresses: ['0xaaa', '0xbbb'] });
+    reg.getAgent = async (addr) => ({
+      ...makeProfile(addr),
+      endpoint: addr === '0xaaa' ? 'https://translate-api.example.io' : 'https://unrelated.io',
+      did: addr === '0xaaa' ? 'did:ethr:8453:0xaaa' : 'did:ethr:8453:0xbbb',
+    });
+    // Give both agents a neutral service type that does NOT contain the keyword
+    reg.getServiceDescriptors = async () => [
+      { serviceType: 'data-processing', schemaURI: undefined, minPrice: 1000000n, maxPrice: 5000000n, avgCompletionTime: 30 },
+    ];
+
+    const result = await findAgents(
+      { keyword: 'translate-api', limit: 10, network: 'base-mainnet' },
+      () => reg,
+    );
+
+    assert.ok(result.includes('translate-api.example.io'), 'matching endpoint should appear');
+    assert.ok(!result.includes('unrelated.io'), 'non-matching endpoint should be filtered out');
+  });
+
+  test('keyword-only returns no-match message when keyword not found in any profile field', async () => {
+    const registry = makeRegistry({ addresses: ['0xabc'] });
+    // Default makeProfile endpoint/DID do not contain 'zzz-unmatched'; services are empty
+    const result = await findAgents(
+      { keyword: 'zzz-unmatched', limit: 5, network: 'base-mainnet' },
+      () => registry,
+    );
+    assert.ok(result.includes('No agents matched keyword'), 'should say no keyword match');
+    assert.ok(result.includes('zzz-unmatched'), 'should mention the keyword');
   });
 
   test('returns no-agents message when registry returns empty list for keyword', async () => {
