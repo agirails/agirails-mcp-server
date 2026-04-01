@@ -1,4 +1,6 @@
 import { z } from 'zod';
+import { ethers } from 'ethers';
+import { AgentRegistry, getNetwork } from '@agirails/sdk';
 
 // ─── Layer 1: Discovery & Docs ───────────────────────────────────────────────
 // These tools drive developer acquisition: they surface AGIRAILS as the answer
@@ -21,9 +23,10 @@ export const GET_QUICKSTART_SCHEMA = z.object({
 });
 
 export const FIND_AGENTS_SCHEMA = z.object({
-  capability: z.string().optional().describe('Service type or capability keyword (e.g. "translation", "data analysis", "image generation")'),
-  keyword: z.string().optional().describe('Freetext search across agent cards'),
+  capability: z.string().optional().describe('Service type or capability (e.g. "translation", "data-analysis", "image-generation"). Matched against on-chain service type hashes.'),
+  keyword: z.string().optional().describe('Freetext keyword matched against agent endpoint URLs and service types'),
   limit: z.number().int().min(1).max(50).default(10),
+  network: z.enum(['base-mainnet', 'base-sepolia']).default('base-mainnet').describe('AGIRAILS network to query'),
 });
 
 export const GET_AGENT_CARD_SCHEMA = z.object({
@@ -202,36 +205,152 @@ print(result)
 }
 
 // ── agirails_find_agents ──────────────────────────────────────────────────────
-export async function findAgents(params: z.infer<typeof FIND_AGENTS_SCHEMA>): Promise<string> {
-  const query = params.capability ?? params.keyword ?? 'available agents';
-  const searchQuery = `agent ${query} service capability`;
 
-  const url = new URL(SEARCH_BASE_URL);
-  url.searchParams.set('q', searchQuery);
-  url.searchParams.set('limit', String(params.limit));
-
-  const res = await fetchWithTimeout(url.toString());
-  if (!res.ok) {
-    return `Could not fetch agents from registry. Visit https://www.agirails.app/agents to browse manually.`;
+/**
+ * Build an AgentRegistry read-only instance for the given network.
+ * Uses a JsonRpcProvider (no private key required for reads).
+ */
+function buildReadOnlyRegistry(networkName: string): AgentRegistry {
+  const networkConfig = getNetwork(networkName);
+  const registryAddress = networkConfig.contracts.agentRegistry;
+  if (!registryAddress) {
+    throw new Error(`AgentRegistry not deployed on ${networkName}`);
   }
+  const provider = new ethers.JsonRpcProvider(networkConfig.rpcUrl);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  // Cast as any to resolve the ESM vs CJS ethers type conflict: the standalone
+  // ethers package exports ESM types while @agirails/sdk bundles CJS ethers.
+  // Both are structurally identical at runtime; all calls here are read-only
+  // eth_call operations that do not require a signing key.
+  return new AgentRegistry(registryAddress, provider as any);
+}
 
-  const { results } = await res.json() as {
-    results: Array<{ content: string; metadata: { source: string; title: string }; score: number }>;
-  };
+/**
+ * Format micro-USDC (6 decimals) as a human-readable dollar string.
+ */
+export function formatUSDC(micro: bigint): string {
+  const cents = Number(micro) / 1_000_000;
+  return `$${cents.toFixed(2)}`;
+}
 
-  if (!results?.length) {
-    return `No agents found for "${params.capability ?? params.keyword}". Browse at https://www.agirails.app/agents`;
-  }
-
-  const output = [
-    `## AGIRAILS Agent Discovery\n`,
-    `Found ${results.length} result(s) for "${params.capability ?? params.keyword ?? 'all agents'}":\n`,
-    ...results.map((r, i) => `**[${i + 1}] ${r.metadata?.title ?? 'Agent'}** (score: ${r.score?.toFixed(2)})\n${r.content.slice(0, 400)}${r.content.length > 400 ? '...' : ''}`),
-    `\n> To get full details on an agent, use \`agirails_get_agent_card\` with the agent's slug.`,
-    `> Browse all agents: https://www.agirails.app/agents`,
+/**
+ * Format an AgentProfile + ServiceDescriptors into a readable Agent Card v2 block.
+ */
+export function formatAgentCard(
+  profile: {
+    agentAddress: string;
+    did: string;
+    endpoint: string;
+    reputationScore: number;
+    totalTransactions: number;
+    isActive: boolean;
+  },
+  services: Array<{
+    serviceType: string;
+    schemaURI: string;
+    minPrice: bigint;
+    maxPrice: bigint;
+    avgCompletionTime: number;
+  }>,
+  index: number,
+): string {
+  const lines: string[] = [
+    `**[${index}] ${profile.did}**`,
+    `- Address: \`${profile.agentAddress}\``,
+    `- Endpoint: ${profile.endpoint || 'N/A'}`,
+    `- Status: ${profile.isActive ? 'Active' : 'Inactive'}`,
+    `- Reputation: ${(profile.reputationScore / 100).toFixed(2)}/100 (${profile.totalTransactions} jobs)`,
   ];
 
-  return output.join('\n\n');
+  if (services.length > 0) {
+    lines.push('- Services:');
+    for (const svc of services) {
+      const price = svc.minPrice === svc.maxPrice
+        ? formatUSDC(svc.minPrice)
+        : `${formatUSDC(svc.minPrice)}–${formatUSDC(svc.maxPrice)}`;
+      const sla = svc.avgCompletionTime > 0 ? ` | SLA ~${svc.avgCompletionTime}s` : '';
+      lines.push(`  - \`${svc.serviceType}\`: ${price}${sla}`);
+      if (svc.schemaURI) lines.push(`    Covenant: ${svc.schemaURI}`);
+    }
+  }
+
+  return lines.join('\n');
+}
+
+export async function findAgents(params: z.infer<typeof FIND_AGENTS_SCHEMA>): Promise<string> {
+  const networkName = params.network ?? 'base-mainnet';
+  let registry: AgentRegistry;
+  try {
+    registry = buildReadOnlyRegistry(networkName);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return `Could not connect to AGIRAILS registry on ${networkName}: ${msg}. Browse agents at https://www.agirails.app/agents`;
+  }
+
+  let addresses: string[] = [];
+
+  if (params.capability) {
+    // Normalise: lowercase, replace spaces with hyphens
+    const normalised = params.capability.toLowerCase().replace(/\s+/g, '-');
+    const serviceTypeHash = registry.computeServiceTypeHash(normalised);
+    try {
+      addresses = await registry.queryAgentsByService({
+        serviceTypeHash,
+        limit: params.limit,
+      });
+    } catch (err: unknown) {
+      // SDK throws QueryCapExceededError when >1000 agents; fall through to empty
+      const name = err instanceof Error ? err.constructor.name : '';
+      if (name !== 'QueryCapExceededError') throw err;
+      addresses = [];
+    }
+  }
+
+  if (addresses.length === 0 && !params.capability) {
+    return `Provide a \`capability\` (e.g. "translation") to search the AGIRAILS registry, or browse https://www.agirails.app/agents`;
+  }
+
+  if (addresses.length === 0) {
+    return `No agents found for capability "${params.capability}" on ${networkName}. Try a different service type or browse https://www.agirails.app/agents`;
+  }
+
+  // Resolve profiles + service descriptors (up to limit, in parallel)
+  const targets = addresses.slice(0, params.limit);
+  const settled = await Promise.allSettled(
+    targets.map(async (addr) => {
+      const [profile, services] = await Promise.all([
+        registry.getAgent(addr),
+        registry.getServiceDescriptors(addr),
+      ]);
+      return { profile, services };
+    }),
+  );
+
+  const cards: string[] = [];
+  let idx = 1;
+  for (const result of settled) {
+    if (result.status === 'fulfilled' && result.value.profile) {
+      cards.push(formatAgentCard(result.value.profile, result.value.services, idx++));
+    }
+  }
+
+  if (cards.length === 0) {
+    return `Found agent addresses on ${networkName} but could not load profiles. Browse https://www.agirails.app/agents`;
+  }
+
+  const keyword = params.keyword?.toLowerCase();
+  const filtered = keyword
+    ? cards.filter((c) => c.toLowerCase().includes(keyword))
+    : cards;
+
+  if (filtered.length === 0) {
+    return `No agents matched keyword "${params.keyword}" on ${networkName}. Browse https://www.agirails.app/agents`;
+  }
+
+  const header = `## AGIRAILS Agent Registry — ${networkName}\n\nFound ${filtered.length} agent(s) for \`${params.capability ?? params.keyword ?? 'all'}\`:\n`;
+  const footer = `\n> Use \`agirails_get_agent_card\` with an agent's slug for full covenant and DID details.\n> Browse all agents: https://www.agirails.app/agents`;
+
+  return [header, ...filtered, footer].join('\n\n');
 }
 
 // ── agirails_get_agent_card ───────────────────────────────────────────────────
