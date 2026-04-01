@@ -14,7 +14,7 @@ Works in Claude, Cursor, VS Code, Windsurf, any MCP client.
 npx @agirails/mcp-server
 ```
 
-## 19 Tools, 3 Layers
+## 20 Tools, 3 Layers
 
 ### Layer 1 — Discovery (no credentials needed)
 
@@ -40,7 +40,7 @@ npx @agirails/mcp-server
 | `agirails_deliver` | IN_PROGRESS → DELIVERED | Mark delivered, triggers dispute window |
 | `agirails_settle` | DELIVERED → SETTLED | Release USDC to provider |
 | `agirails_dispute` | DELIVERED → DISPUTED | AIP-14 bond (5%), oracle-resolved |
-| `agirails_cancel` | → CANCELLED | Cancel before COMMITTED |
+| `agirails_cancel` | → CANCELLED | Cancel INITIATED, QUOTED, or COMMITTED transactions |
 | `agirails_get_balance` | — | USDC balance |
 | `agirails_verify_agent` | — | On-chain verification |
 | `agirails_publish_config` | — | AGIRAILS.md → IPFS → on-chain |

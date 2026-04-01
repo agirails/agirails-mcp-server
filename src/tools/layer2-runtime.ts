@@ -97,8 +97,8 @@ export const PUBLISH_CONFIG_SCHEMA = z.object({
 // Agents with @agirails/sdk can execute these directly.
 
 /** Escape a user-supplied string for safe embedding in a single-quoted TS literal. */
-function esc(s: string): string {
-  return s.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+export function esc(s: string): string {
+  return s.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, '\\n').replace(/\r/g, '\\r');
 }
 
 export function generateInit(params: z.infer<typeof INIT_SCHEMA>): string {
@@ -137,7 +137,7 @@ await agent.start();
 // Initiate — moves to INITIATED state, provider will respond with quote
 const { txId } = await agent.request('${esc(params.agentSlug)}', {
   service: '${esc(params.service)}',
-  budget: '${params.budget}',  // max USDC (locks only after quote acceptance)
+  budget: '${esc(params.budget)}',  // max USDC (locks only after quote acceptance)
 });
 
 console.log('Transaction ID:', txId);
