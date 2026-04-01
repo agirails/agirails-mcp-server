@@ -1,0 +1,70 @@
+{
+  "name": "@agirails/mcp-server",
+  "version": "0.1.0",
+  "description": "MCP server for AGIRAILS — agent payments, discovery, escrow, and settlement from any AI context window. Works with Claude Desktop, Cursor, VS Code, Windsurf, and any MCP-compatible client.",
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "agent-payments",
+    "AI-agent",
+    "agentic",
+    "USDC",
+    "escrow",
+    "Base-L2",
+    "ACTP",
+    "x402",
+    "ERC-8004",
+    "agent-economy",
+    "agent-commerce",
+    "agent-to-agent",
+    "agent-negotiation",
+    "dispute-resolution",
+    "agent-reputation",
+    "agent-discovery",
+    "agent-card",
+    "gasless",
+    "ERC-4337",
+    "price-negotiation",
+    "agirails",
+    "crypto-payments",
+    "web3-agent"
+  ],
+  "homepage": "https://www.agirails.app",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/agirails/agirails-mcp-server"
+  },
+  "bugs": {
+    "url": "https://github.com/agirails/agirails-mcp-server/issues"
+  },
+  "license": "MIT",
+  "author": "AGIRails <hello@agirails.io>",
+  "type": "module",
+  "bin": {
+    "agirails-mcp": "./dist/index.js"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "start": "node dist/index.js",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.15.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.0",
+    "@types/node": "^20.0.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
