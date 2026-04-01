@@ -212,6 +212,8 @@ print(result)
 export interface AgentRegistryLike {
   computeServiceTypeHash(serviceType: string): string;
   queryAgentsByService(params: { serviceTypeHash: string; limit: number }): Promise<string[]>;
+  /** Return agent addresses matching a free-text keyword (off-chain keyword-capable source). */
+  findAgentsByKeyword(keyword: string, limit: number): Promise<string[]>;
   getAgent(agentAddress: string): Promise<{
     agentAddress: string;
     did: string;
@@ -230,9 +232,13 @@ export interface AgentRegistryLike {
 }
 
 
+const DISCOVER_URL = 'https://www.agirails.app/api/v1/discover';
+
 /**
  * Build an AgentRegistry read-only instance for the given network.
  * Uses a JsonRpcProvider (no private key required for reads).
+ * Returns a wrapper that satisfies AgentRegistryLike, adding findAgentsByKeyword
+ * via the AGIRAILS off-chain discover API (keyword-capable candidate source).
  */
 function buildReadOnlyRegistry(networkName: string): AgentRegistryLike {
   const networkConfig = getNetwork(networkName);
@@ -246,7 +252,28 @@ function buildReadOnlyRegistry(networkName: string): AgentRegistryLike {
   // ethers package exports ESM types while @agirails/sdk bundles CJS ethers.
   // Both are structurally identical at runtime; all calls here are read-only
   // eth_call operations that do not require a signing key.
-  return new AgentRegistry(registryAddress, provider as any);
+  const reg = new AgentRegistry(registryAddress, provider as any);
+
+  return {
+    computeServiceTypeHash: (s: string) => reg.computeServiceTypeHash(s),
+    queryAgentsByService: (params: { serviceTypeHash: string; limit: number }) =>
+      reg.queryAgentsByService(params),
+    async findAgentsByKeyword(keyword: string, limit: number): Promise<string[]> {
+      const url = `${DISCOVER_URL}?search=${encodeURIComponent(keyword)}&limit=${limit}`;
+      try {
+        const res = await fetchWithTimeout(url);
+        if (!res.ok) return [];
+        const data = await res.json() as { agents?: Array<{ address?: string }> };
+        return (data.agents ?? [])
+          .map((a) => a.address)
+          .filter((addr): addr is string => typeof addr === 'string');
+      } catch {
+        return [];
+      }
+    },
+    getAgent: (addr: string) => reg.getAgent(addr),
+    getServiceDescriptors: (addr: string) => reg.getServiceDescriptors(addr),
+  };
 }
 
 /**
@@ -307,10 +334,7 @@ export async function findAgents(
 ): Promise<string> {
   const networkName = params.network ?? 'base-mainnet';
 
-  // Both capability and keyword-only paths go through AgentRegistry.
-  // When only a keyword is supplied, it is treated as the service type query term.
-  const serviceType = params.capability ?? params.keyword;
-  if (!serviceType) {
+  if (!params.capability && !params.keyword) {
     return `Provide a \`capability\` (e.g. "translation") or \`keyword\` to search, or browse https://www.agirails.app/agents`;
   }
 
@@ -325,28 +349,38 @@ export async function findAgents(
 
   let addresses: string[] = [];
 
-  // Normalise: lowercase, replace spaces with hyphens
-  const normalised = serviceType.toLowerCase().replace(/\s+/g, '-');
-  const serviceTypeHash = registry.computeServiceTypeHash(normalised);
-  try {
-    addresses = await registry.queryAgentsByService({
-      serviceTypeHash,
-      limit: params.limit,
-    });
-  } catch (err: unknown) {
-    // SDK throws QueryCapExceededError when >1000 agents; fall through to empty
-    const name = err instanceof Error ? err.constructor.name : '';
-    if (name !== 'QueryCapExceededError') throw err;
-    addresses = [];
+  if (params.capability) {
+    // Capability path: hash the service type and query on-chain registry.
+    const normalised = params.capability.toLowerCase().replace(/\s+/g, '-');
+    const serviceTypeHash = registry.computeServiceTypeHash(normalised);
+    try {
+      addresses = await registry.queryAgentsByService({
+        serviceTypeHash,
+        limit: params.limit,
+      });
+    } catch (err: unknown) {
+      // SDK throws QueryCapExceededError when >1000 agents; fall through to empty
+      const name = err instanceof Error ? err.constructor.name : '';
+      if (name !== 'QueryCapExceededError') throw err;
+      addresses = [];
+    }
+
+    if (addresses.length === 0) {
+      return `No agents found for capability "${params.capability}" on ${networkName}. Try a different service type or browse https://www.agirails.app/agents`;
+    }
+  } else {
+    // Keyword-only path: use a keyword-capable off-chain source to obtain candidate
+    // addresses, then enrich from AgentRegistry. We do NOT hash the keyword as a
+    // service type — unknown keywords produce zero on-chain results for domain/endpoint
+    // terms (e.g. "translate-api") even though matching agents exist.
+    addresses = await registry.findAgentsByKeyword(params.keyword!, params.limit);
+
+    if (addresses.length === 0) {
+      return `No agents found for keyword "${params.keyword}" on ${networkName}. Try a different keyword or browse https://www.agirails.app/agents`;
+    }
   }
 
-  if (addresses.length === 0) {
-    return params.capability
-      ? `No agents found for capability "${params.capability}" on ${networkName}. Try a different service type or browse https://www.agirails.app/agents`
-      : `No agents found for keyword "${params.keyword}" on ${networkName}. Try a different keyword or browse https://www.agirails.app/agents`;
-  }
-
-  // Resolve profiles + service descriptors (up to limit, in parallel)
+  // Resolve profiles + service descriptors from AgentRegistry (up to limit, in parallel)
   const targets = addresses.slice(0, params.limit);
   const settled = await Promise.allSettled(
     targets.map(async (addr) => {
