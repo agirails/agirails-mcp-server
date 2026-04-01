@@ -7,10 +7,10 @@
  *
  * Works with Claude Desktop, Cursor, VS Code, Windsurf, and any MCP-compatible client.
  *
- * 19 tools across 3 layers:
- *   Layer 1 — Discovery: search docs, quickstarts, find agents, agent cards, concepts
- *   Layer 2 — Runtime: 13 ACTP lifecycle tools via @agirails/sdk
- *   Layer 3 — Protocol: fetch full AGIRAILS.md spec
+ * 20 tools across 3 layers:
+ *   Layer 1 — Discovery: search docs, quickstarts, find agents, agent cards, concepts (5 tools)
+ *   Layer 2 — Runtime: 14 ACTP lifecycle tools via @agirails/sdk (returns code snippets)
+ *   Layer 3 — Protocol: fetch full AGIRAILS.md spec (1 tool)
  */
 
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
@@ -109,98 +109,98 @@ const TOOLS = [
   {
     name: 'agirails_init',
     description:
-      'Set up AIP-13 keystore and register agent on-chain (gasless ERC-4337). Run this first to get your agent address and start transacting.',
+      'Returns a TypeScript snippet to set up AIP-13 keystore and register agent on-chain (gasless ERC-4337). Run the generated code first to get your agent address and start transacting.',
     inputSchema: zodToJsonSchema(INIT_SCHEMA),
     annotations: { readOnlyHint: false, destructiveHint: false },
   },
   {
     name: 'agirails_request_service',
     description:
-      'Request a service from a registered AGIRAILS agent. Initiates an ACTP transaction (INITIATED state). Funds NOT locked yet — use agirails_accept_quote after receiving a price.',
+      'Returns a TypeScript snippet to request a service from a registered AGIRAILS agent. The generated code initiates an ACTP transaction (INITIATED state). Funds NOT locked yet — use agirails_accept_quote after receiving a price.',
     inputSchema: zodToJsonSchema(REQUEST_SERVICE_SCHEMA),
     annotations: { readOnlyHint: false, destructiveHint: false },
   },
   {
     name: 'agirails_pay',
     description:
-      'Smart pay: automatically selects ACTP escrow (for 0x agent addresses and slugs) or x402 instant payment (for HTTPS endpoints). Use for direct payments without negotiation.',
+      'Returns a TypeScript snippet for smart pay: the generated code automatically selects ACTP escrow (for 0x agent addresses and slugs) or x402 instant payment (for HTTPS endpoints). Use for direct payments without negotiation.',
     inputSchema: zodToJsonSchema(PAY_SCHEMA),
     annotations: { readOnlyHint: false, destructiveHint: false },
   },
   {
     name: 'agirails_submit_quote',
     description:
-      'Provider: submit a price quote for a requested service (INITIATED → QUOTED). Include price in USDC and a description of what will be delivered.',
+      'Returns a TypeScript snippet for a provider to submit a price quote for a requested service (INITIATED → QUOTED). Include price in USDC and a description of what will be delivered.',
     inputSchema: zodToJsonSchema(SUBMIT_QUOTE_SCHEMA),
     annotations: { readOnlyHint: false, destructiveHint: false },
   },
   {
     name: 'agirails_accept_quote',
     description:
-      'Requester: accept a provider quote and lock USDC in escrow (QUOTED → COMMITTED). Only call this after reviewing the quote from agirails_get_transaction.',
+      'Returns a TypeScript snippet for a requester to accept a provider quote and lock USDC in escrow (QUOTED → COMMITTED). Only generate this code after reviewing the quote from agirails_get_transaction.',
     inputSchema: zodToJsonSchema(ACCEPT_QUOTE_SCHEMA),
     annotations: { readOnlyHint: false, destructiveHint: false },
   },
   {
     name: 'agirails_get_transaction',
     description:
-      'Get full transaction status, escrow balance, next action hint, and all metadata. Use to check what state a transaction is in.',
+      'Returns a TypeScript snippet to get full transaction status, escrow balance, next action hint, and all metadata. Use to check what state a transaction is in.',
     inputSchema: zodToJsonSchema(GET_TRANSACTION_SCHEMA),
     annotations: { readOnlyHint: true, idempotentHint: true },
   },
   {
     name: 'agirails_list_transactions',
     description:
-      'List your transactions with optional filters by state (INITIATED, QUOTED, COMMITTED, IN_PROGRESS, DELIVERED, SETTLED, DISPUTED, CANCELLED) and role (requester/provider).',
+      'Returns a TypeScript snippet to list transactions with optional filters by state (INITIATED, QUOTED, COMMITTED, IN_PROGRESS, DELIVERED, SETTLED, DISPUTED, CANCELLED) and role (requester/provider).',
     inputSchema: zodToJsonSchema(LIST_TRANSACTIONS_SCHEMA),
     annotations: { readOnlyHint: true, idempotentHint: true },
   },
   {
     name: 'agirails_deliver',
     description:
-      'Provider: mark a transaction as delivered (IN_PROGRESS → DELIVERED). Include the deliverable — result, CID, URL, or summary. Triggers the requester dispute window.',
+      'Returns a TypeScript snippet for a provider to mark a transaction as delivered (IN_PROGRESS → DELIVERED). Include the deliverable — result, CID, URL, or summary. Running the code triggers the requester dispute window.',
     inputSchema: zodToJsonSchema(DELIVER_SCHEMA),
     annotations: { readOnlyHint: false, destructiveHint: false },
   },
   {
     name: 'agirails_settle',
     description:
-      'Requester: release escrowed USDC to the provider (DELIVERED → SETTLED). Call this when you are satisfied with the delivery. Also updates provider ERC-8004 reputation.',
+      'Returns a TypeScript snippet for a requester to release escrowed USDC to the provider (DELIVERED → SETTLED). Generate this code when satisfied with the delivery. Running it also updates provider ERC-8004 reputation.',
     inputSchema: zodToJsonSchema(SETTLE_SCHEMA),
     annotations: { readOnlyHint: false, destructiveHint: false },
   },
   {
     name: 'agirails_dispute',
     description:
-      'Raise an AIP-14 dispute (DELIVERED → DISPUTED). Requires 5% bond. Oracle-resolved within 24-72 hours. Use when delivery does not match the covenant/deliverables.',
+      'Returns a TypeScript snippet to raise an AIP-14 dispute (DELIVERED → DISPUTED). The generated code posts a 5% bond; oracle-resolved within 24-72 hours. Use when delivery does not match the covenant/deliverables.',
     inputSchema: zodToJsonSchema(DISPUTE_SCHEMA),
     annotations: { readOnlyHint: false, destructiveHint: true },
   },
   {
     name: 'agirails_cancel',
     description:
-      'Cancel a transaction before it reaches COMMITTED state. Returns any escrowed funds to requester.',
+      'Returns a TypeScript snippet to cancel a transaction. The generated code cancels INITIATED, QUOTED, or COMMITTED transactions and returns any escrowed funds to the requester.',
     inputSchema: zodToJsonSchema(CANCEL_SCHEMA),
     annotations: { readOnlyHint: false, destructiveHint: true },
   },
   {
     name: 'agirails_get_balance',
     description:
-      'Get your USDC balance: total, locked in escrow, and available. Check this before committing to transactions.',
+      'Returns a TypeScript snippet to get your USDC balance: total, locked in escrow, and available. Run the generated code before committing to transactions.',
     inputSchema: zodToJsonSchema(GET_BALANCE_SCHEMA),
     annotations: { readOnlyHint: true, idempotentHint: true },
   },
   {
     name: 'agirails_verify_agent',
     description:
-      'Verify an agent on-chain via AgentRegistry (AIP-7). Returns agentId, DID, config_hash, and reputation score. Use before high-value transactions.',
+      'Returns a TypeScript snippet to verify an agent on-chain via AgentRegistry (AIP-7). The generated code fetches agentId, DID, config_hash, and reputation score. Use before high-value transactions.',
     inputSchema: zodToJsonSchema(VERIFY_AGENT_SCHEMA),
     annotations: { readOnlyHint: true, idempotentHint: true },
   },
   {
     name: 'agirails_publish_config',
     description:
-      'Publish your AGIRAILS.md to IPFS and register the CID on-chain (AIP-7). Makes your agent publicly discoverable on the AGIRAILS network.',
+      'Returns a TypeScript snippet to publish your AGIRAILS.md to IPFS and register the CID on-chain (AIP-7). Running the generated code makes your agent publicly discoverable on the AGIRAILS network.',
     inputSchema: zodToJsonSchema(PUBLISH_CONFIG_SCHEMA),
     annotations: { readOnlyHint: false, destructiveHint: false },
   },
@@ -275,12 +275,6 @@ function buildSchema(def: any): Record<string, unknown> {
 
   if (typeName === 'ZodOptional') {
     return buildSchema(def.innerType._def);
-  }
-
-  if (typeName === 'ZodDescribed' || def.description) {
-    const inner = buildSchema(def.innerType?._def ?? def);
-    if (def.description) (inner as any).description = def.description;
-    return inner;
   }
 
   return {};

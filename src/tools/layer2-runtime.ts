@@ -96,6 +96,11 @@ export const PUBLISH_CONFIG_SCHEMA = z.object({
 // Each tool returns a TypeScript code snippet + explanation.
 // Agents with @agirails/sdk can execute these directly.
 
+/** Escape a user-supplied string for safe embedding in a single-quoted TS literal. */
+function esc(s: string): string {
+  return s.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+}
+
 export function generateInit(params: z.infer<typeof INIT_SCHEMA>): string {
   return `## Initialize AGIRAILS Keystore
 
@@ -106,7 +111,7 @@ import { ACTPClient } from '@agirails/sdk';
 
 const client = await ACTPClient.create({
   mode: '${params.network}',
-  agentName: '${params.name}',
+  agentName: '${esc(params.name)}',
   ${params.overwrite ? 'overwrite: true,' : ''}
 });
 
@@ -119,7 +124,7 @@ console.log('Agent ID:', client.agentId);
 }
 
 export function generateRequestService(params: z.infer<typeof REQUEST_SERVICE_SCHEMA>): string {
-  return `## Request Service from ${params.agentSlug}
+  return `## Request Service from ${esc(params.agentSlug)}
 
 Initiates an ACTP transaction. Funds are NOT locked until you accept a quote.
 
@@ -130,8 +135,8 @@ const agent = new Agent({ network: '${params.network}' });
 await agent.start();
 
 // Initiate — moves to INITIATED state, provider will respond with quote
-const { txId } = await agent.request('${params.agentSlug}', {
-  service: '${params.service.replace(/'/g, "\\'")}',
+const { txId } = await agent.request('${esc(params.agentSlug)}', {
+  service: '${esc(params.service)}',
   budget: '${params.budget}',  // max USDC (locks only after quote acceptance)
 });
 
@@ -165,8 +170,8 @@ const client = await ACTPClient.create({ mode: '${params.network}' });
 
 // x402 instant payment — atomically splits fee and forwards to endpoint
 const result = await client.x402.pay({
-  url: '${params.target}',
-  amount: '${params.amount}',
+  url: '${esc(params.target)}',
+  amount: '${esc(params.amount)}',
 });
 
 console.log('Payment result:', result);
@@ -183,9 +188,9 @@ import { ACTPClient } from '@agirails/sdk';
 const client = await ACTPClient.create({ mode: '${params.network}' });
 
 const txId = await client.kernel.pay({
-  to: '${params.target}',
-  amount: '${params.amount}',
-  ${params.service ? `service: '${params.service.replace(/'/g, "\\'")}',` : ''}
+  to: '${esc(params.target)}',
+  amount: '${esc(params.amount)}',
+  ${params.service ? `service: '${esc(params.service)}',` : ''}
 });
 
 console.log('Transaction ID:', txId);
@@ -203,10 +208,10 @@ import { ACTPClient } from '@agirails/sdk';
 const client = await ACTPClient.create({ mode: '${params.network}' });
 
 await client.kernel.submitQuote({
-  txId: '${params.txId}',
-  price: '${params.price}',  // USDC
-  deliverables: '${params.deliverables.replace(/'/g, "\\'")}',
-  ${params.estimatedDelivery ? `estimatedDelivery: '${params.estimatedDelivery}',` : ''}
+  txId: '${esc(params.txId)}',
+  price: '${esc(params.price)}',  // USDC
+  deliverables: '${esc(params.deliverables)}',
+  ${params.estimatedDelivery ? `estimatedDelivery: '${esc(params.estimatedDelivery)}',` : ''}
 });
 
 console.log('Quote submitted. Waiting for requester to accept.');
@@ -225,7 +230,7 @@ import { ACTPClient } from '@agirails/sdk';
 
 const client = await ACTPClient.create({ mode: '${params.network}' });
 
-await client.kernel.acceptQuote({ txId: '${params.txId}' });
+await client.kernel.acceptQuote({ txId: '${esc(params.txId)}' });
 
 console.log('Quote accepted. Escrow locked. Provider can now begin work.');
 \`\`\`
@@ -240,7 +245,7 @@ export function generateGetTransaction(params: z.infer<typeof GET_TRANSACTION_SC
 import { ACTPClient } from '@agirails/sdk';
 
 const client = await ACTPClient.create({ mode: '${params.network}' });
-const tx = await client.kernel.getTransaction('${params.txId}');
+const tx = await client.kernel.getTransaction('${esc(params.txId)}');
 
 console.log('State:', tx.state);
 console.log('Escrow balance:', tx.escrowBalance, 'USDC');
@@ -284,8 +289,8 @@ import { ACTPClient } from '@agirails/sdk';
 const client = await ACTPClient.create({ mode: '${params.network}' });
 
 await client.kernel.deliver({
-  txId: '${params.txId}',
-  deliverable: '${params.deliverable.replace(/'/g, "\\'")}',
+  txId: '${esc(params.txId)}',
+  deliverable: '${esc(params.deliverable)}',
 });
 
 console.log('Marked as DELIVERED. Requester has a dispute window to review.');
@@ -304,7 +309,7 @@ import { ACTPClient } from '@agirails/sdk';
 
 const client = await ACTPClient.create({ mode: '${params.network}' });
 
-await client.kernel.settle({ txId: '${params.txId}' });
+await client.kernel.settle({ txId: '${esc(params.txId)}' });
 
 console.log('Transaction settled. USDC released to provider.');
 \`\`\`
@@ -323,8 +328,8 @@ import { ACTPClient } from '@agirails/sdk';
 const client = await ACTPClient.create({ mode: '${params.network}' });
 
 await client.kernel.dispute({
-  txId: '${params.txId}',
-  reason: '${params.reason.replace(/'/g, "\\'")}',
+  txId: '${esc(params.txId)}',
+  reason: '${esc(params.reason)}',
 });
 
 console.log('Dispute raised. AIP-14 oracle will resolve.');
@@ -342,12 +347,12 @@ import { ACTPClient } from '@agirails/sdk';
 
 const client = await ACTPClient.create({ mode: '${params.network}' });
 
-await client.kernel.cancel({ txId: '${params.txId}' });
+await client.kernel.cancel({ txId: '${esc(params.txId)}' });
 
 console.log('Transaction cancelled. Escrow (if any) returned to requester.');
 \`\`\`
 
-> Transactions can be cancelled before COMMITTED. After COMMITTED, use \`agirails_dispute\` instead.`;
+> Transactions in INITIATED, QUOTED, or COMMITTED state can be cancelled. After IN_PROGRESS/DELIVERED, use \`agirails_dispute\` instead.`;
 }
 
 export function generateGetBalance(params: z.infer<typeof GET_BALANCE_SCHEMA>): string {
@@ -377,7 +382,7 @@ import { ACTPClient } from '@agirails/sdk';
 
 const client = await ACTPClient.create({ mode: '${params.network}' });
 
-const verification = await client.registry.verify('${params.agentSlug}');
+const verification = await client.registry.verify('${esc(params.agentSlug)}');
 
 console.log('Agent ID:', verification.agentId);
 console.log('DID:', verification.did);
@@ -399,7 +404,7 @@ import { ACTPClient } from '@agirails/sdk';
 import { readFileSync } from 'fs';
 
 const client = await ACTPClient.create({ mode: '${params.network}' });
-const configContent = readFileSync('${params.configPath}', 'utf-8');
+const configContent = readFileSync('${esc(params.configPath)}', 'utf-8');
 
 const { cid, txHash } = await client.registry.publishConfig({
   content: configContent,

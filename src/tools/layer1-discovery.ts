@@ -40,6 +40,12 @@ const SEARCH_BASE_URL = 'https://www.agirails.app/api/v1/search';
 const AGENT_CARD_BASE_URL = 'https://www.agirails.app/a';
 const PROTOCOL_SPEC_URL = 'https://www.agirails.app/protocol/AGIRAILS.md';
 
+function fetchWithTimeout(url: string, timeoutMs = 10000): Promise<Response> {
+  const controller = new AbortController();
+  const id = setTimeout(() => controller.abort(), timeoutMs);
+  return fetch(url, { signal: controller.signal }).finally(() => clearTimeout(id));
+}
+
 // ── agirails_search_docs ──────────────────────────────────────────────────────
 export async function searchDocs(params: z.infer<typeof SEARCH_DOCS_SCHEMA>): Promise<string> {
   const url = new URL(SEARCH_BASE_URL);
@@ -47,7 +53,7 @@ export async function searchDocs(params: z.infer<typeof SEARCH_DOCS_SCHEMA>): Pr
   url.searchParams.set('limit', String(params.limit));
   if (params.type !== 'all') url.searchParams.set('type', params.type);
 
-  const res = await fetch(url.toString());
+  const res = await fetchWithTimeout(url.toString());
   if (!res.ok) {
     throw new Error(`Search failed: ${res.status} ${res.statusText}`);
   }
@@ -204,7 +210,7 @@ export async function findAgents(params: z.infer<typeof FIND_AGENTS_SCHEMA>): Pr
   url.searchParams.set('q', searchQuery);
   url.searchParams.set('limit', String(params.limit));
 
-  const res = await fetch(url.toString());
+  const res = await fetchWithTimeout(url.toString());
   if (!res.ok) {
     return `Could not fetch agents from registry. Visit https://www.agirails.app/agents to browse manually.`;
   }
@@ -232,7 +238,7 @@ export async function findAgents(params: z.infer<typeof FIND_AGENTS_SCHEMA>): Pr
 export async function getAgentCard(params: z.infer<typeof GET_AGENT_CARD_SCHEMA>): Promise<string> {
   const cardUrl = `${AGENT_CARD_BASE_URL}/${params.slug}.md`;
 
-  const res = await fetch(cardUrl);
+  const res = await fetchWithTimeout(cardUrl);
   if (!res.ok) {
     if (res.status === 404) {
       return `Agent "${params.slug}" not found. Use agirails_find_agents to discover available agents, or browse https://www.agirails.app/agents`;
@@ -276,7 +282,7 @@ export async function explainConcept(params: z.infer<typeof EXPLAIN_CONCEPT_SCHE
 
 // ── agirails_get_protocol_spec ────────────────────────────────────────────────
 export async function getProtocolSpec(): Promise<string> {
-  const res = await fetch(PROTOCOL_SPEC_URL);
+  const res = await fetchWithTimeout(PROTOCOL_SPEC_URL);
   if (!res.ok) {
     return `Protocol spec unavailable. Visit https://docs.agirails.io for documentation.`;
   }
