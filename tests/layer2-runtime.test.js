@@ -99,6 +99,15 @@ describe('generateRequestService', () => {
     const result = generateRequestService(REQUEST_SERVICE_SCHEMA.parse({ ...base, budget: '5', agentSlug: "agent'x" }));
     assert(!result.includes("request('agent'x'"), 'unescaped quote in slug must not appear');
   });
+
+  // Fix #21 (AGI-50): SDK 3.0 uses payment:received, not transaction:* events
+  test('uses payment:received event, not legacy transaction:* events', () => {
+    const result = generateRequestService(REQUEST_SERVICE_SCHEMA.parse({ ...base, budget: '5' }));
+    assert(result.includes("'payment:received'"), 'must include payment:received event');
+    assert(!result.includes('transaction:quoted'), 'legacy transaction:quoted must not appear');
+    assert(!result.includes('transaction:committed'), 'legacy transaction:committed must not appear');
+    assert(!result.includes('transaction:settled'), 'legacy transaction:settled must not appear');
+  });
 });
 
 // ── All generators return non-empty strings (SDK 3.0 API) ─────────────────────

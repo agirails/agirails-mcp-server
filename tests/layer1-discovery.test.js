@@ -433,6 +433,24 @@ describe('getQuickstart() — TypeScript pay snippet', () => {
   });
 });
 
+// ── getQuickstart — SDK 3.0 event names (Fix #21 / AGI-50 regression guard) ──
+
+describe('getQuickstart() — SDK 3.0 event names', () => {
+  test('full agent snippet uses job:received, job:completed, payment:received', () => {
+    const output = getQuickstart({ intent: 'both', language: 'typescript', network: 'testnet' });
+    assert.ok(output.includes("'job:received'"), `expected job:received in: ${output}`);
+    assert.ok(output.includes("'job:completed'"), `expected job:completed in: ${output}`);
+    assert.ok(output.includes("'payment:received'"), `expected payment:received in: ${output}`);
+  });
+
+  test('full agent snippet does not contain legacy transaction:* event names', () => {
+    const output = getQuickstart({ intent: 'both', language: 'typescript', network: 'testnet' });
+    assert.ok(!output.includes('transaction:quoted'), `legacy transaction:quoted must not appear in: ${output}`);
+    assert.ok(!output.includes('transaction:committed'), `legacy transaction:committed must not appear in: ${output}`);
+    assert.ok(!output.includes('transaction:settled'), `legacy transaction:settled must not appear in: ${output}`);
+  });
+});
+
 describe('findAgents() — no search term', () => {
   test('returns prompt when neither capability nor keyword is given', async () => {
     const result = await findAgents({ limit: 10, network: 'base-mainnet' });
