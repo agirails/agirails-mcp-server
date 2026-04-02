@@ -100,14 +100,14 @@ provide('your-service-name', async (job) => {
 }, { network: '${networkStr}' });
 `.trim();
 
+  // Fix #19: first arg is service name (not agent slug), option key is `input` not `service`, budget is number
   const paySnippet = `
 // === PAY an AI agent for work (Level 0 - simplest) ===
-// Fix #19 (AGI-48): first arg is service name (not agent slug)
 import { request } from '@agirails/sdk';
 
 const { result } = await request('translation', {
-  service: 'Translate this text to Spanish: Hello world',
-  budget: '5',  // max USDC willing to pay
+  input: 'Translate this text to Spanish: Hello world',
+  budget: 5,  // max USDC willing to pay
   network: '${networkStr}',
 });
 console.log(result); // "Hola mundo"

@@ -142,9 +142,9 @@ describe('all generators produce output', () => {
     assert(!r.includes('kernel'), 'must not use non-existent kernel namespace');
   });
 
-  // Fix #3 (AGI-32): acceptQuote uses standard.acceptQuote() + linkEscrow(); requires newAmount
+  // Fix #3 (AGI-32): acceptQuote uses standard.acceptQuote() + linkEscrow(); requires quotedPrice
   test('generateAcceptQuote uses standard.acceptQuote() and linkEscrow()', () => {
-    const r = generateAcceptQuote(ACCEPT_QUOTE_SCHEMA.parse({ txId, newAmount: '3.00', network }));
+    const r = generateAcceptQuote(ACCEPT_QUOTE_SCHEMA.parse({ txId, quotedPrice: '3.00', network }));
     assert(r.includes('standard.acceptQuote'), 'must use client.standard.acceptQuote()');
     assert(r.includes('linkEscrow'), 'must call linkEscrow() to commit funds');
     assert(!r.includes('kernel'), 'must not use non-existent kernel namespace');
@@ -204,12 +204,11 @@ describe('all generators produce output', () => {
     assert(!r.includes('balance.locked'), 'must not destructure removed .locked property');
   });
 
-  // Fix #11 (AGI-40): verifyAgent uses standalone AgentRegistry with Signer, not client.registry.verify()
-  test('generateVerifyAgent uses standalone AgentRegistry with Signer', () => {
-    const r = generateVerifyAgent(VERIFY_AGENT_SCHEMA.parse({ agentAddress: '0xabc123', network }));
+  // Fix #11 (AGI-40): verifyAgent uses standalone AgentRegistry, not client.registry.verify()
+  test('generateVerifyAgent uses standalone AgentRegistry', () => {
+    const r = generateVerifyAgent(VERIFY_AGENT_SCHEMA.parse({ agentSlug: 'my-agent', network }));
     assert(r.includes('AgentRegistry'), 'must import and use AgentRegistry');
     assert(r.includes('registry.getAgent'), 'must call registry.getAgent()');
-    assert(r.includes('createRandom'), 'must use createRandom() for read-only signer');
     assert(!r.includes('client.registry'), 'must not use non-existent client.registry namespace');
   });
 
@@ -252,19 +251,17 @@ describe('schema validation', () => {
     );
   });
 
-  // Fix #3 (AGI-32): ACCEPT_QUOTE_SCHEMA now requires newAmount
-  test('ACCEPT_QUOTE_SCHEMA rejects missing newAmount', () => {
+  // Fix #3 (AGI-32): ACCEPT_QUOTE_SCHEMA now requires quotedPrice
+  test('ACCEPT_QUOTE_SCHEMA rejects missing quotedPrice', () => {
     assert.throws(
       () => ACCEPT_QUOTE_SCHEMA.parse({ txId: 'tx-1', network: 'testnet' }),
-      /newAmount/i,
+      /quotedPrice/i,
     );
   });
 
-  // Fix #11 (AGI-40): VERIFY_AGENT_SCHEMA now requires agentAddress not agentSlug
-  test('VERIFY_AGENT_SCHEMA requires agentAddress', () => {
-    assert.throws(
-      () => VERIFY_AGENT_SCHEMA.parse({ agentSlug: 'my-agent', network: 'testnet' }),
-      /agentAddress/i,
-    );
+  // Fix #11 (AGI-40): VERIFY_AGENT_SCHEMA accepts agentSlug (uses getAgentByDID internally)
+  test('VERIFY_AGENT_SCHEMA requires agentSlug', () => {
+    const result = VERIFY_AGENT_SCHEMA.safeParse({ agentSlug: 'my-agent', network: 'testnet' });
+    assert(result.success, 'agentSlug-based verify should parse successfully');
   });
 });
