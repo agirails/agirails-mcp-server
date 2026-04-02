@@ -102,9 +102,10 @@ provide('your-service-name', async (job) => {
 
   const paySnippet = `
 // === PAY an AI agent for work (Level 0 - simplest) ===
+// Fix #19 (AGI-48): first arg is service name (not agent slug)
 import { request } from '@agirails/sdk';
 
-const { result } = await request('agent-slug', {
+const { result } = await request('translation', {
   service: 'Translate this text to Spanish: Hello world',
   budget: '5',  // max USDC willing to pay
   network: '${networkStr}',
@@ -126,12 +127,15 @@ agent.provide('translation', async (job) => {
   return \`Translated: \${job.service}\`;
 });
 
-// Listen to state transitions
-agent.on('transaction:committed', (tx) => {
-  console.log(\`New job committed: $\${tx.amountMicro / 1e6}\`);
+// Fix #21 (AGI-50): correct SDK 3.0 event names
+agent.on('job:received', (job) => {
+  console.log(\`New job received: \${job.id}\`);
 });
-agent.on('transaction:settled', (tx) => {
-  console.log(\`Paid out: $\${tx.amountMicro / 1e6}\`);
+agent.on('job:completed', (job, result) => {
+  console.log(\`Job completed: \${job.id}\`);
+});
+agent.on('payment:received', (amount) => {
+  console.log(\`Paid out: $\${Number(amount) / 1e6} USDC\`);
 });
 
 await agent.start();
@@ -255,12 +259,18 @@ function buildReadOnlyRegistry(networkName: string): AgentRegistryLike {
     throw new Error(`AgentRegistry not deployed on ${networkName}`);
   }
   const provider = new ethers.JsonRpcProvider(networkConfig.rpcUrl);
+  // Fix #15 (AGI-44): AgentRegistry constructor requires a Signer, not a Provider.
+  // For read-only queries (getAgent, queryAgentsByService) we use a random ephemeral
+  // wallet connected to the provider. No private key is needed — all calls are
+  // pure eth_call reads that do not send transactions or require signing.
+  //
+  // ESM/CJS ethers type conflict: the standalone ethers package (ESM) and the one
+  // bundled inside @agirails/sdk (CJS) are structurally identical at runtime but
+  // their TypeScript declarations refer to different declaration files. The `as any`
+  // cast resolves the compile-time mismatch without affecting runtime behaviour.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  // Cast as any to resolve the ESM vs CJS ethers type conflict: the standalone
-  // ethers package exports ESM types while @agirails/sdk bundles CJS ethers.
-  // Both are structurally identical at runtime; all calls here are read-only
-  // eth_call operations that do not require a signing key.
-  const reg = new AgentRegistry(registryAddress, provider as any);
+  const readSigner = ethers.Wallet.createRandom().connect(provider) as any;
+  const reg = new AgentRegistry(registryAddress, readSigner);
 
   return {
     computeServiceTypeHash: (s: string) => reg.computeServiceTypeHash(s),

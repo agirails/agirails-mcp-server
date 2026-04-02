@@ -41,6 +41,7 @@ export const SUBMIT_QUOTE_SCHEMA = z.object({
 
 export const ACCEPT_QUOTE_SCHEMA = z.object({
   txId: TxIdSchema,
+  newAmount: z.string().describe('Agreed amount in USDC to lock in escrow (e.g. "3.00")'),
   network: NetworkSchema,
 });
 
@@ -83,7 +84,7 @@ export const GET_BALANCE_SCHEMA = z.object({
 });
 
 export const VERIFY_AGENT_SCHEMA = z.object({
-  agentSlug: z.string().describe('Agent slug to verify on-chain (AgentRegistry.sol)'),
+  agentAddress: z.string().describe('Agent Ethereum address (0x...) to verify on-chain via AgentRegistry'),
   network: NetworkSchema,
 });
 
@@ -101,6 +102,9 @@ export function esc(s: string): string {
   return s.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, '\\n').replace(/\r/g, '\\r');
 }
 
+// Fix #14: Removed invalid agentName and overwrite from ACTPClient.create() config.
+// Removed non-existent client.agentAddress and client.agentId properties.
+// Use client.getAddress() and client.info instead. (AGI-43)
 export function generateInit(params: z.infer<typeof INIT_SCHEMA>): string {
   return `## Initialize AGIRAILS Keystore
 
@@ -111,12 +115,10 @@ import { ACTPClient } from '@agirails/sdk';
 
 const client = await ACTPClient.create({
   mode: '${params.network}',
-  agentName: '${esc(params.name)}',
-  ${params.overwrite ? 'overwrite: true,' : ''}
 });
 
-console.log('Agent address:', client.agentAddress);
-console.log('Agent ID:', client.agentId);
+console.log('Agent address:', client.getAddress());
+console.log('Agent info:', client.info);
 \`\`\`
 
 > **Note:** Your private key is stored locally in the keystore. Never share it.
@@ -135,27 +137,29 @@ const agent = new Agent({ network: '${params.network}' });
 await agent.start();
 
 // Initiate — moves to INITIATED state, provider will respond with quote
-const { txId } = await agent.request('${esc(params.agentSlug)}', {
+const { txId } = await agent.request('${esc(params.service)}', {
   service: '${esc(params.service)}',
   budget: '${esc(params.budget)}',  // max USDC (locks only after quote acceptance)
+  network: '${params.network}',
 });
 
 console.log('Transaction ID:', txId);
 console.log('Status: INITIATED — waiting for provider quote');
 
-// Wait for quote
-agent.on('transaction:quoted', async (tx) => {
-  if (tx.id === txId) {
-    console.log(\`Quote received: $\${tx.quotedAmount} USDC\`);
-    console.log('Deliverables:', tx.deliverables);
-    // Accept with: agirails_accept_quote({ txId, network: '${params.network}' })
-  }
+// Wait for quote (job:received is emitted when provider responds)
+agent.on('job:received', async (job) => {
+  console.log(\`Job received: \${job.id}\`);
+  console.log('Budget:', job.budget, 'USDC');
+  // Accept with: agirails_accept_quote({ txId, newAmount, network: '${params.network}' })
 });
 \`\`\`
 
 > **Next step:** Use \`agirails_get_transaction\` to check status, or \`agirails_accept_quote\` to lock escrow.`;
 }
 
+// Fix #10: client.x402.pay() → X402Adapter standalone + client.pay({ to: url, amount })
+// Fix #1:  client.kernel.pay() → client.pay({ to, amount })
+// (AGI-39, AGI-30)
 export function generatePay(params: z.infer<typeof PAY_SCHEMA>): string {
   const isX402 = params.target.startsWith('https://');
   const isAddress = params.target.startsWith('0x');
@@ -164,13 +168,18 @@ export function generatePay(params: z.infer<typeof PAY_SCHEMA>): string {
     return `## Smart Pay via x402 (instant HTTP payment)
 
 \`\`\`typescript
-import { ACTPClient } from '@agirails/sdk';
+import { ACTPClient, X402Adapter } from '@agirails/sdk';
 
 const client = await ACTPClient.create({ mode: '${params.network}' });
 
-// x402 instant payment — atomically splits fee and forwards to endpoint
-const result = await client.x402.pay({
-  url: '${esc(params.target)}',
+// Register X402Adapter for HTTPS endpoints
+client.registerAdapter(new X402Adapter(client.getAddress(), {
+  expectedNetwork: '${params.network}',
+}));
+
+// client.pay() auto-routes to x402 for HTTPS URLs
+const result = await client.pay({
+  to: '${esc(params.target)}',
   amount: '${esc(params.amount)}',
 });
 
@@ -187,39 +196,40 @@ import { ACTPClient } from '@agirails/sdk';
 
 const client = await ACTPClient.create({ mode: '${params.network}' });
 
-const txId = await client.kernel.pay({
+const result = await client.pay({
   to: '${esc(params.target)}',
   amount: '${esc(params.amount)}',
-  ${params.service ? `service: '${esc(params.service)}',` : ''}
+  ${params.service ? `metadata: { serviceDescription: '${esc(params.service)}' },` : ''}
 });
 
-console.log('Transaction ID:', txId);
+console.log('Transaction ID:', result.txId);
 \`\`\``;
 }
 
+// Fix #2: client.kernel.submitQuote() → client.advanced.transitionState(txId, 'QUOTED') (AGI-31)
 export function generateSubmitQuote(params: z.infer<typeof SUBMIT_QUOTE_SCHEMA>): string {
   return `## Submit Quote (INITIATED → QUOTED)
 
-As the provider, submit your price and deliverables:
+As the provider, transition the transaction to QUOTED state:
 
 \`\`\`typescript
 import { ACTPClient } from '@agirails/sdk';
 
 const client = await ACTPClient.create({ mode: '${params.network}' });
 
-await client.kernel.submitQuote({
-  txId: '${esc(params.txId)}',
-  price: '${esc(params.price)}',  // USDC
-  deliverables: '${esc(params.deliverables)}',
-  ${params.estimatedDelivery ? `estimatedDelivery: '${esc(params.estimatedDelivery)}',` : ''}
-});
+// Transition to QUOTED state
+await client.advanced.transitionState('${esc(params.txId)}', 'QUOTED');
 
-console.log('Quote submitted. Waiting for requester to accept.');
+console.log('Transaction moved to QUOTED state.');
+console.log('Price: ${esc(params.price)} USDC');
+console.log('Deliverables: ${esc(params.deliverables)}');
+${params.estimatedDelivery ? `console.log('Estimated delivery: ${esc(params.estimatedDelivery)}');` : ''}
 \`\`\`
 
-> Requester will see this quote and can accept (locks escrow) or ignore it.`;
+> Requester will see this state change and can accept (locks escrow) or ignore it.`;
 }
 
+// Fix #3: client.kernel.acceptQuote() → client.standard.acceptQuote(txId, newAmount) + linkEscrow() (AGI-32)
 export function generateAcceptQuote(params: z.infer<typeof ACCEPT_QUOTE_SCHEMA>): string {
   return `## Accept Quote (QUOTED → COMMITTED)
 
@@ -230,7 +240,11 @@ import { ACTPClient } from '@agirails/sdk';
 
 const client = await ACTPClient.create({ mode: '${params.network}' });
 
-await client.kernel.acceptQuote({ txId: '${esc(params.txId)}' });
+// Accept the quote with the agreed amount
+await client.standard.acceptQuote('${esc(params.txId)}', '${esc(params.newAmount)}');
+
+// Lock funds in escrow → transitions to COMMITTED
+await client.standard.linkEscrow('${esc(params.txId)}');
 
 console.log('Quote accepted. Escrow locked. Provider can now begin work.');
 \`\`\`
@@ -238,6 +252,7 @@ console.log('Quote accepted. Escrow locked. Provider can now begin work.');
 > Once committed, escrow is locked. Use \`agirails_dispute\` if the work is unsatisfactory.`;
 }
 
+// Fix #4: client.kernel.getTransaction() → client.advanced.getTransaction(txId) (AGI-33)
 export function generateGetTransaction(params: z.infer<typeof GET_TRANSACTION_SCHEMA>): string {
   return `## Get Transaction Status
 
@@ -245,14 +260,17 @@ export function generateGetTransaction(params: z.infer<typeof GET_TRANSACTION_SC
 import { ACTPClient } from '@agirails/sdk';
 
 const client = await ACTPClient.create({ mode: '${params.network}' });
-const tx = await client.kernel.getTransaction('${esc(params.txId)}');
+const tx = await client.advanced.getTransaction('${esc(params.txId)}');
 
-console.log('State:', tx.state);
-console.log('Escrow balance:', tx.escrowBalance, 'USDC');
-console.log('Requester:', tx.requester);
-console.log('Provider:', tx.provider);
-console.log('Service:', tx.service);
-if (tx.deliverables) console.log('Deliverables:', tx.deliverables);
+if (!tx) {
+  console.log('Transaction not found');
+} else {
+  console.log('State:', tx.state);
+  console.log('Amount:', tx.amount);
+  console.log('Requester:', tx.requester);
+  console.log('Provider:', tx.provider);
+  console.log('Service:', tx.serviceDescription);
+}
 
 // State flow: INITIATED → QUOTED → COMMITTED → IN_PROGRESS → DELIVERED → SETTLED
 // Or: INITIATED/QUOTED/COMMITTED → CANCELLED
@@ -260,7 +278,12 @@ if (tx.deliverables) console.log('Deliverables:', tx.deliverables);
 \`\`\``;
 }
 
+// Fix #5: client.kernel.listTransactions() → client.advanced.getAllTransactions() (AGI-34)
+// getAllTransactions() has no filter params — apply client-side filtering
 export function generateListTransactions(params: z.infer<typeof LIST_TRANSACTIONS_SCHEMA>): string {
+  const hasStateFilter = params.state !== 'all';
+  const hasRoleFilter = params.role !== 'all';
+
   return `## List Transactions
 
 \`\`\`typescript
@@ -268,18 +291,21 @@ import { ACTPClient } from '@agirails/sdk';
 
 const client = await ACTPClient.create({ mode: '${params.network}' });
 
-const transactions = await client.kernel.listTransactions({
-  ${params.state !== 'all' ? `state: '${params.state}',` : ''}
-  ${params.role !== 'all' ? `role: '${params.role}',` : ''}
-  limit: ${params.limit},
-});
+// getAllTransactions() returns all transactions; filter client-side
+let transactions = await client.advanced.getAllTransactions();
+${hasStateFilter ? `\ntransactions = transactions.filter(tx => tx.state === '${params.state}');` : ''}
+${hasRoleFilter ? `\nconst myAddress = client.getAddress();\ntransactions = transactions.filter(tx =>\n  ${params.role === 'requester' ? 'tx.requester?.toLowerCase() === myAddress.toLowerCase()' : 'tx.provider?.toLowerCase() === myAddress.toLowerCase()'}\n);` : ''}
+
+// Apply limit
+transactions = transactions.slice(0, ${params.limit});
 
 for (const tx of transactions) {
-  console.log(\`[\${tx.state}] \${tx.id} — $\${tx.escrowBalance} USDC — \${tx.service}\`);
+  console.log(\`[\${tx.state}] \${tx.id} — \${tx.amount} — \${tx.serviceDescription}\`);
 }
 \`\`\``;
 }
 
+// Fix #6: client.kernel.deliver() → client.deliver(txId) (AGI-35)
 export function generateDeliver(params: z.infer<typeof DELIVER_SCHEMA>): string {
   return `## Mark Delivered (IN_PROGRESS → DELIVERED)
 
@@ -288,17 +314,16 @@ import { ACTPClient } from '@agirails/sdk';
 
 const client = await ACTPClient.create({ mode: '${params.network}' });
 
-await client.kernel.deliver({
-  txId: '${esc(params.txId)}',
-  deliverable: '${esc(params.deliverable)}',
-});
+await client.deliver('${esc(params.txId)}');
 
 console.log('Marked as DELIVERED. Requester has a dispute window to review.');
+console.log('Deliverable: ${esc(params.deliverable)}');
 \`\`\`
 
 > After delivery, the requester can settle (releases escrow) or dispute (bonds 5%, oracle reviews).`;
 }
 
+// Fix #7: client.kernel.settle() → client.release(escrowId) (AGI-36)
 export function generateSettle(params: z.infer<typeof SETTLE_SCHEMA>): string {
   return `## Settle Transaction (DELIVERED → SETTLED)
 
@@ -309,7 +334,8 @@ import { ACTPClient } from '@agirails/sdk';
 
 const client = await ACTPClient.create({ mode: '${params.network}' });
 
-await client.kernel.settle({ txId: '${esc(params.txId)}' });
+// release() is explicit — must be called after dispute window expires
+await client.release('${esc(params.txId)}');
 
 console.log('Transaction settled. USDC released to provider.');
 \`\`\`
@@ -317,6 +343,7 @@ console.log('Transaction settled. USDC released to provider.');
 > Settling also updates the provider's ERC-8004 reputation score.`;
 }
 
+// Fix #8: client.kernel.dispute() → client.advanced.transitionState(txId, 'DISPUTED') (AGI-37)
 export function generateDispute(params: z.infer<typeof DISPUTE_SCHEMA>): string {
   return `## Dispute Transaction (DELIVERED → DISPUTED)
 
@@ -327,18 +354,17 @@ import { ACTPClient } from '@agirails/sdk';
 
 const client = await ACTPClient.create({ mode: '${params.network}' });
 
-await client.kernel.dispute({
-  txId: '${esc(params.txId)}',
-  reason: '${esc(params.reason)}',
-});
+await client.advanced.transitionState('${esc(params.txId)}', 'DISPUTED');
 
 console.log('Dispute raised. AIP-14 oracle will resolve.');
+console.log('Reason: ${esc(params.reason)}');
 console.log('Note: 5% of escrow posted as dispute bond.');
 \`\`\`
 
 > Oracle resolution typically takes 24-72 hours. Both parties can submit evidence.`;
 }
 
+// Fix #9: client.kernel.cancel() → client.advanced.transitionState(txId, 'CANCELLED') (AGI-38)
 export function generateCancel(params: z.infer<typeof CANCEL_SCHEMA>): string {
   return `## Cancel Transaction
 
@@ -347,7 +373,7 @@ import { ACTPClient } from '@agirails/sdk';
 
 const client = await ACTPClient.create({ mode: '${params.network}' });
 
-await client.kernel.cancel({ txId: '${esc(params.txId)}' });
+await client.advanced.transitionState('${esc(params.txId)}', 'CANCELLED');
 
 console.log('Transaction cancelled. Escrow (if any) returned to requester.');
 \`\`\`
@@ -355,6 +381,7 @@ console.log('Transaction cancelled. Escrow (if any) returned to requester.');
 > Transactions in INITIATED, QUOTED, or COMMITTED state can be cancelled. After IN_PROGRESS/DELIVERED, use \`agirails_dispute\` instead.`;
 }
 
+// Fix #13: client.getBalance() no-arg → client.getBalance(address: string) returns string (AGI-42)
 export function generateGetBalance(params: z.infer<typeof GET_BALANCE_SCHEMA>): string {
   return `## Get USDC Balance
 
@@ -363,57 +390,69 @@ import { ACTPClient } from '@agirails/sdk';
 
 const client = await ACTPClient.create({ mode: '${params.network}' });
 
-const balance = await client.getBalance();
-console.log('USDC balance:', balance.usdc, 'USDC');
-console.log('Locked in escrow:', balance.locked, 'USDC');
-console.log('Available:', balance.available, 'USDC');
+const address = client.getAddress();
+const balanceWei = await client.getBalance(address);
+
+// Convert from wei (6 decimals) to USDC
+const balanceUSDC = (Number(balanceWei) / 1_000_000).toFixed(2);
+console.log('USDC balance:', balanceUSDC, 'USDC');
 \`\`\`
 
 > Fund your agent at: https://www.agirails.app/fund (Base ${params.network === 'mainnet' ? 'Mainnet' : 'Sepolia'})`;
 }
 
+// Fix #11: client.registry.verify() → standalone AgentRegistry with Signer (AGI-40)
 export function generateVerifyAgent(params: z.infer<typeof VERIFY_AGENT_SCHEMA>): string {
   return `## Verify Agent On-Chain (AgentRegistry)
 
-Checks AIP-7 on-chain registration: agentId, config_hash, DID:
+Checks AIP-7 on-chain registration: DID, endpoint, reputation:
 
 \`\`\`typescript
-import { ACTPClient } from '@agirails/sdk';
+import { AgentRegistry, getNetwork } from '@agirails/sdk';
+import { ethers } from 'ethers';
 
-const client = await ACTPClient.create({ mode: '${params.network}' });
+const networkConfig = getNetwork('${params.network}');
+const provider = new ethers.JsonRpcProvider(networkConfig.rpcUrl);
 
-const verification = await client.registry.verify('${esc(params.agentSlug)}');
+// AgentRegistry requires a Signer — use a random wallet for read-only queries
+const readSigner = ethers.Wallet.createRandom().connect(provider);
+const registry = new AgentRegistry(networkConfig.contracts.agentRegistry, readSigner);
 
-console.log('Agent ID:', verification.agentId);
-console.log('DID:', verification.did);
-console.log('Config hash:', verification.configHash);
-console.log('Reputation score:', verification.reputationScore);
-console.log('Registered at:', verification.registeredAt);
+const profile = await registry.getAgent('${esc(params.agentAddress)}');
+
+if (!profile) {
+  console.log('Agent not registered on-chain');
+} else {
+  console.log('DID:', profile.did);
+  console.log('Endpoint:', profile.endpoint);
+  console.log('Reputation score:', profile.reputationScore);
+  console.log('Total transactions:', profile.totalTransactions);
+  console.log('Active:', profile.isActive);
+}
 \`\`\`
 
 > On-chain verification ensures the agent's configuration hasn't been tampered with.`;
 }
 
+// Fix #12: client.registry.publishConfig() → agirails publish CLI (AGI-41)
 export function generatePublishConfig(params: z.infer<typeof PUBLISH_CONFIG_SCHEMA>): string {
   return `## Publish Agent Config (AIP-7)
 
-Publishes your AGIRAILS.md to IPFS and registers the CID on-chain:
+Publishes your AGIRAILS.md to IPFS and registers the CID on-chain.
 
-\`\`\`typescript
-import { ACTPClient } from '@agirails/sdk';
-import { readFileSync } from 'fs';
+Use the \`agirails\` CLI (included with \`@agirails/sdk\`):
 
-const client = await ACTPClient.create({ mode: '${params.network}' });
-const configContent = readFileSync('${esc(params.configPath)}', 'utf-8');
-
-const { cid, txHash } = await client.registry.publishConfig({
-  content: configContent,
-});
-
-console.log('Published to IPFS:', cid);
-console.log('On-chain tx:', txHash);
-console.log('Your agent is now publicly discoverable!');
+\`\`\`bash
+# Publish your AGIRAILS.md config on-chain
+npx agirails publish --path ${esc(params.configPath)} --network ${params.network}
 \`\`\`
 
-> Any AI reading your AGIRAILS.md (via Agent Card) will know exactly how to work with your agent.`;
+The CLI will:
+1. Parse and validate your \`${esc(params.configPath)}\`
+2. Upload to IPFS (Filebase)
+3. Register the config hash on-chain via AgentRegistry
+
+> **Requires:** \`FILEBASE_ACCESS_KEY\` and \`FILEBASE_SECRET_KEY\` env vars for IPFS upload.
+> **Network:** Base ${params.network === 'mainnet' ? 'Mainnet' : 'Sepolia'}
+> Your agent will be publicly discoverable after publishing.`;
 }

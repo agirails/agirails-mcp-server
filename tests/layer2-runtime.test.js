@@ -1,6 +1,8 @@
 /**
  * Tests for Layer 2 runtime: escaping safety, generator output, schema validation.
  * Run after build: node --test tests/
+ *
+ * Updated for SDK 3.0 (AGI-29): all generators now target SDK 3.0 API surface.
  */
 
 import { test, describe } from 'node:test';
@@ -99,81 +101,124 @@ describe('generateRequestService', () => {
   });
 });
 
-// ── All generators return non-empty strings ───────────────────────────────────
+// ── All generators return non-empty strings (SDK 3.0 API) ─────────────────────
 
 describe('all generators produce output', () => {
   const txId = 'tx-abc-123';
   const network = 'testnet';
 
-  test('generateInit', () => {
+  // Fix #14 (AGI-43): init uses ACTPClient.create({ mode }) only; client.getAddress()
+  test('generateInit uses getAddress() not agentAddress', () => {
     const r = generateInit(INIT_SCHEMA.parse({ name: 'my-agent', network }));
     assert(r.length > 50);
     assert(r.includes('ACTPClient'));
+    assert(r.includes('getAddress()'), 'must use client.getAddress()');
+    assert(!r.includes('agentAddress'), 'must not use removed agentAddress property');
+    assert(!r.includes('agentId'), 'must not use removed agentId property');
+    assert(!r.includes('agentName'), 'must not pass agentName to ACTPClient.create()');
+    assert(!r.includes('overwrite'), 'must not pass overwrite to ACTPClient.create()');
   });
 
-  test('generatePay x402 path', () => {
+  // Fix #10 (AGI-39): x402 path uses X402Adapter + client.pay(), not client.x402.pay()
+  test('generatePay x402 path uses X402Adapter', () => {
     const r = generatePay(PAY_SCHEMA.parse({ target: 'https://api.example.com/pay', amount: '1', network }));
-    assert(r.includes('x402'));
+    assert(r.includes('X402Adapter'), 'must use X402Adapter');
+    assert(r.includes('client.pay('), 'must call client.pay()');
+    assert(!r.includes('client.x402'), 'must not use non-existent client.x402 namespace');
   });
 
-  test('generatePay ACTP path', () => {
+  // Fix #1 (AGI-30): ACTP path uses client.pay(), not client.kernel.pay()
+  test('generatePay ACTP path uses client.pay()', () => {
     const r = generatePay(PAY_SCHEMA.parse({ target: '0xabc123', amount: '1', network }));
-    assert(r.includes('kernel.pay'));
+    assert(r.includes('client.pay('), 'must call client.pay()');
+    assert(!r.includes('kernel.pay'), 'must not use non-existent kernel.pay');
   });
 
-  test('generateSubmitQuote', () => {
+  // Fix #2 (AGI-31): submitQuote uses transitionState('QUOTED'), not kernel.submitQuote()
+  test('generateSubmitQuote uses transitionState', () => {
     const r = generateSubmitQuote(SUBMIT_QUOTE_SCHEMA.parse({ txId, price: '3.00', deliverables: 'a report', network }));
-    assert(r.includes('submitQuote'));
+    assert(r.includes('transitionState'), 'must use client.advanced.transitionState()');
+    assert(r.includes("'QUOTED'"), 'must transition to QUOTED state');
+    assert(!r.includes('kernel'), 'must not use non-existent kernel namespace');
   });
 
-  test('generateAcceptQuote', () => {
-    const r = generateAcceptQuote(ACCEPT_QUOTE_SCHEMA.parse({ txId, network }));
-    assert(r.includes('acceptQuote'));
+  // Fix #3 (AGI-32): acceptQuote uses standard.acceptQuote() + linkEscrow(); requires newAmount
+  test('generateAcceptQuote uses standard.acceptQuote() and linkEscrow()', () => {
+    const r = generateAcceptQuote(ACCEPT_QUOTE_SCHEMA.parse({ txId, newAmount: '3.00', network }));
+    assert(r.includes('standard.acceptQuote'), 'must use client.standard.acceptQuote()');
+    assert(r.includes('linkEscrow'), 'must call linkEscrow() to commit funds');
+    assert(!r.includes('kernel'), 'must not use non-existent kernel namespace');
   });
 
-  test('generateGetTransaction', () => {
+  // Fix #4 (AGI-33): getTransaction uses advanced.getTransaction(), not kernel.getTransaction()
+  test('generateGetTransaction uses advanced.getTransaction()', () => {
     const r = generateGetTransaction(GET_TRANSACTION_SCHEMA.parse({ txId, network }));
-    assert(r.includes('getTransaction'));
+    assert(r.includes('advanced.getTransaction'), 'must use client.advanced.getTransaction()');
+    assert(!r.includes('kernel'), 'must not use non-existent kernel namespace');
   });
 
-  test('generateListTransactions', () => {
+  // Fix #5 (AGI-34): listTransactions uses advanced.getAllTransactions(), not kernel.listTransactions()
+  test('generateListTransactions uses advanced.getAllTransactions()', () => {
     const r = generateListTransactions(LIST_TRANSACTIONS_SCHEMA.parse({ network }));
-    assert(r.includes('listTransactions'));
+    assert(r.includes('getAllTransactions'), 'must use client.advanced.getAllTransactions()');
+    assert(!r.includes('listTransactions'), 'must not use non-existent listTransactions');
+    assert(!r.includes('kernel'), 'must not use non-existent kernel namespace');
   });
 
-  test('generateDeliver', () => {
+  // Fix #6 (AGI-35): deliver uses client.deliver(), not kernel.deliver()
+  test('generateDeliver uses client.deliver()', () => {
     const r = generateDeliver(DELIVER_SCHEMA.parse({ txId, deliverable: 'the file', network }));
-    assert(r.includes('deliver'));
+    assert(r.includes('client.deliver('), 'must use client.deliver()');
+    assert(!r.includes('kernel'), 'must not use non-existent kernel namespace');
   });
 
-  test('generateSettle', () => {
+  // Fix #7 (AGI-36): settle uses client.release(), not kernel.settle()
+  test('generateSettle uses client.release()', () => {
     const r = generateSettle(SETTLE_SCHEMA.parse({ txId, network }));
-    assert(r.includes('settle'));
+    assert(r.includes('client.release('), 'must use client.release()');
+    assert(!r.includes('kernel'), 'must not use non-existent kernel namespace');
   });
 
-  test('generateDispute', () => {
+  // Fix #8 (AGI-37): dispute uses transitionState('DISPUTED'), not kernel.dispute()
+  test('generateDispute uses transitionState DISPUTED', () => {
     const r = generateDispute(DISPUTE_SCHEMA.parse({ txId, reason: 'wrong output', network }));
-    assert(r.includes('dispute'));
+    assert(r.includes('transitionState'), 'must use client.advanced.transitionState()');
+    assert(r.includes("'DISPUTED'"), 'must transition to DISPUTED state');
+    assert(!r.includes('kernel'), 'must not use non-existent kernel namespace');
   });
 
-  test('generateCancel', () => {
+  // Fix #9 (AGI-38): cancel uses transitionState('CANCELLED'), not kernel.cancel()
+  test('generateCancel uses transitionState CANCELLED', () => {
     const r = generateCancel(CANCEL_SCHEMA.parse({ txId, network }));
-    assert(r.includes('cancel'));
+    assert(r.includes('transitionState'), 'must use client.advanced.transitionState()');
+    assert(r.includes("'CANCELLED'"), 'must transition to CANCELLED state');
+    assert(!r.includes('kernel'), 'must not use non-existent kernel namespace');
   });
 
-  test('generateGetBalance', () => {
+  // Fix #13 (AGI-42): getBalance requires address arg, returns string (not { usdc, locked, available })
+  test('generateGetBalance passes address arg and no destructuring', () => {
     const r = generateGetBalance(GET_BALANCE_SCHEMA.parse({ network }));
-    assert(r.includes('getBalance'));
+    assert(r.includes('getBalance'), 'must call getBalance');
+    assert(r.includes('getAddress()'), 'must pass client.getAddress() as address arg');
+    assert(!r.includes('balance.usdc'), 'must not destructure removed .usdc property');
+    assert(!r.includes('balance.locked'), 'must not destructure removed .locked property');
   });
 
-  test('generateVerifyAgent', () => {
-    const r = generateVerifyAgent(VERIFY_AGENT_SCHEMA.parse({ agentSlug: 'my-agent', network }));
-    assert(r.includes('registry.verify'));
+  // Fix #11 (AGI-40): verifyAgent uses standalone AgentRegistry with Signer, not client.registry.verify()
+  test('generateVerifyAgent uses standalone AgentRegistry with Signer', () => {
+    const r = generateVerifyAgent(VERIFY_AGENT_SCHEMA.parse({ agentAddress: '0xabc123', network }));
+    assert(r.includes('AgentRegistry'), 'must import and use AgentRegistry');
+    assert(r.includes('registry.getAgent'), 'must call registry.getAgent()');
+    assert(r.includes('createRandom'), 'must use createRandom() for read-only signer');
+    assert(!r.includes('client.registry'), 'must not use non-existent client.registry namespace');
   });
 
-  test('generatePublishConfig', () => {
+  // Fix #12 (AGI-41): publishConfig uses CLI command, not client.registry.publishConfig()
+  test('generatePublishConfig uses agirails publish CLI', () => {
     const r = generatePublishConfig(PUBLISH_CONFIG_SCHEMA.parse({ network }));
-    assert(r.includes('publishConfig'));
+    assert(r.includes('agirails publish'), 'must reference agirails publish CLI');
+    assert(!r.includes('client.registry'), 'must not use non-existent client.registry namespace');
+    assert(!r.includes('registry.publishConfig'), 'must not call non-existent registry.publishConfig()');
   });
 });
 
@@ -204,6 +249,22 @@ describe('schema validation', () => {
     assert.throws(
       () => DISPUTE_SCHEMA.parse({ txId: 'tx-1', network: 'testnet' }),
       /reason/i,
+    );
+  });
+
+  // Fix #3 (AGI-32): ACCEPT_QUOTE_SCHEMA now requires newAmount
+  test('ACCEPT_QUOTE_SCHEMA rejects missing newAmount', () => {
+    assert.throws(
+      () => ACCEPT_QUOTE_SCHEMA.parse({ txId: 'tx-1', network: 'testnet' }),
+      /newAmount/i,
+    );
+  });
+
+  // Fix #11 (AGI-40): VERIFY_AGENT_SCHEMA now requires agentAddress not agentSlug
+  test('VERIFY_AGENT_SCHEMA requires agentAddress', () => {
+    assert.throws(
+      () => VERIFY_AGENT_SCHEMA.parse({ agentSlug: 'my-agent', network: 'testnet' }),
+      /agentAddress/i,
     );
   });
 });
