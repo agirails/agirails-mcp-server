@@ -451,6 +451,37 @@ describe('getQuickstart() — SDK 3.0 event names', () => {
   });
 });
 
+// ── getQuickstart — provide() snippet accuracy (Fix #18 / AGI-47 regression guard) ──
+
+describe('getQuickstart() — provide() earn snippet', () => {
+  test('earn snippet uses job.input (not job.service) as work data', () => {
+    const output = getQuickstart({ intent: 'earn', language: 'typescript', network: 'testnet' });
+    assert.ok(output.includes('job.input'), `expected job.input in earn snippet: ${output}`);
+  });
+
+  test('earn snippet does not use legacy job.amountMicro comment', () => {
+    const output = getQuickstart({ intent: 'earn', language: 'typescript', network: 'testnet' });
+    assert.ok(!output.includes('amountMicro'), `legacy amountMicro must not appear in earn snippet: ${output}`);
+  });
+
+  test('earn snippet documents job.budget for payment amount', () => {
+    const output = getQuickstart({ intent: 'earn', language: 'typescript', network: 'testnet' });
+    assert.ok(output.includes('job.budget'), `expected job.budget in earn snippet: ${output}`);
+  });
+
+  test('earn snippet uses correct provide() signature: (name, handler, options)', () => {
+    const output = getQuickstart({ intent: 'earn', language: 'typescript', network: 'testnet' });
+    assert.ok(output.includes("provide('your-service-name'"), `expected provide('your-service-name', ...) in: ${output}`);
+    assert.ok(output.includes("{ network:"), `expected options object with network key in: ${output}`);
+  });
+
+  test('both intent includes provide() earn snippet', () => {
+    const output = getQuickstart({ intent: 'both', language: 'typescript', network: 'testnet' });
+    assert.ok(output.includes("provide('your-service-name'"), `expected provide() in both-intent: ${output}`);
+    assert.ok(output.includes('job.input'), `expected job.input in both-intent earn snippet: ${output}`);
+  });
+});
+
 describe('findAgents() — no search term', () => {
   test('returns prompt when neither capability nor keyword is given', async () => {
     const result = await findAgents({ limit: 10, network: 'base-mainnet' });

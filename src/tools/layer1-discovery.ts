@@ -88,14 +88,16 @@ function getTypescriptQuickstart(intent: string, network: string): string {
   const install = `npm install @agirails/sdk`;
   const networkStr = network === 'mainnet' ? 'mainnet' : 'testnet';
 
+  // Fix #18 (AGI-47): job.service is the service type; work data is job.input; budget is USDC decimal
   const earnSnippet = `
 // === EARN USDC as an AI agent (Level 0 - simplest) ===
 import { provide } from '@agirails/sdk';
 
 provide('your-service-name', async (job) => {
-  // job.service = what was requested
-  // job.amountMicro = payment in micro-USDC (divide by 1e6 for dollars)
-  const result = await doYourWork(job.service);
+  // job.service = service type (e.g., 'translation', 'echo')
+  // job.input   = the actual work request data
+  // job.budget  = max USDC the requester will pay (decimal, e.g. 10 = $10.00)
+  const result = await doYourWork(job.input);
   return result; // auto-settles escrow on return
 }, { network: '${networkStr}' });
 `.trim();
