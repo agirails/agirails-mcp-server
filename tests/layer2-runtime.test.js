@@ -210,6 +210,8 @@ describe('all generators produce output', () => {
     assert(r.includes('AgentRegistry'), 'must import and use AgentRegistry');
     assert(r.includes('registry.getAgent'), 'must call registry.getAgent()');
     assert(!r.includes('client.registry'), 'must not use non-existent client.registry namespace');
+    assert(!r.includes('provider as any'), 'must not cast provider to any — AgentRegistry requires a Signer');
+    assert(r.includes('Wallet.createRandom') || r.includes('signer'), 'must use a Signer for AgentRegistry');
   });
 
   // Fix #12 (AGI-41): publishConfig uses CLI command, not client.registry.publishConfig()

@@ -426,8 +426,9 @@ import { ethers } from 'ethers';
 
 const networkConfig = getNetwork('${params.network === 'mainnet' ? 'base-mainnet' : 'base-sepolia'}');
 const provider = new ethers.JsonRpcProvider(networkConfig.rpcUrl);
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const registry = new AgentRegistry(networkConfig.contracts.agentRegistry!, provider as any);
+// AgentRegistry requires a Signer (not a Provider). For read-only queries, use a random wallet.
+const signer = ethers.Wallet.createRandom().connect(provider);
+const registry = new AgentRegistry(networkConfig.contracts.agentRegistry!, signer);
 
 // Look up by DID (e.g. 'did:agirails:${esc(params.agentSlug)}') or by on-chain address
 const profile = await registry.getAgentByDID('did:agirails:${esc(params.agentSlug)}');
