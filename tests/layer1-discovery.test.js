@@ -14,6 +14,7 @@ import {
   formatAgentCard,
   FIND_AGENTS_SCHEMA,
   findAgents,
+  getQuickstart,
 } from '../dist/tools/layer1-discovery.js';
 
 // ── formatUSDC ────────────────────────────────────────────────────────────────
@@ -391,6 +392,44 @@ describe('findAgents() — keyword-only path (AgentRegistry-backed)', () => {
       (networkName) => { capturedNetwork = networkName; return buildMockRegistry({ keywordAddresses: [] }); },
     );
     assert.equal(capturedNetwork, 'base-sepolia', 'should pass network to registry factory');
+  });
+});
+
+// ── getQuickstart — TypeScript pay snippet (Fix #19 regression guard) ─────────
+
+describe('getQuickstart() — TypeScript pay snippet', () => {
+  test('uses service name as first arg, not agent slug', () => {
+    const output = getQuickstart({ intent: 'pay', language: 'typescript', network: 'testnet' });
+    assert.ok(output.includes("request('translation'"), `expected request('translation', ...) in: ${output}`);
+  });
+
+  test('uses input: key, not service:', () => {
+    const output = getQuickstart({ intent: 'pay', language: 'typescript', network: 'testnet' });
+    assert.ok(output.includes('input:'), `expected input: key in: ${output}`);
+    assert.ok(!output.includes('service:'), `legacy service: key must not appear in: ${output}`);
+  });
+
+  test('budget is a number, not a string', () => {
+    const output = getQuickstart({ intent: 'pay', language: 'typescript', network: 'testnet' });
+    assert.ok(output.includes('budget: 5'), `expected numeric budget: 5 in: ${output}`);
+    assert.ok(!output.includes("budget: '"), `budget must not be a string in: ${output}`);
+  });
+
+  test('does not contain legacy request("agent-slug") pattern', () => {
+    const output = getQuickstart({ intent: 'pay', language: 'typescript', network: 'testnet' });
+    assert.ok(!output.includes("request('agent-slug'"), `legacy agent-slug must not appear in: ${output}`);
+  });
+
+  test('works for both intent (includes pay snippet)', () => {
+    const output = getQuickstart({ intent: 'both', language: 'typescript', network: 'testnet' });
+    assert.ok(output.includes("request('translation'"), `expected request('translation', ...) in both-intent: ${output}`);
+    assert.ok(output.includes('input:'), `expected input: in both-intent: ${output}`);
+    assert.ok(output.includes('budget: 5'), `expected numeric budget in both-intent: ${output}`);
+  });
+
+  test('earn intent does not produce pay snippet', () => {
+    const output = getQuickstart({ intent: 'earn', language: 'typescript', network: 'testnet' });
+    assert.ok(!output.includes('budget: 5'), `earn-only snippet should not include pay budget in: ${output}`);
   });
 });
 
