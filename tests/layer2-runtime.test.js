@@ -9,6 +9,7 @@ import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   esc,
+  shellQuote,
   generateInit,
   generateRequestService,
   generatePay,
@@ -229,6 +230,47 @@ describe('all generators produce output', () => {
     assert(r.includes('agirails publish'), 'must reference agirails publish CLI');
     assert(!r.includes('client.registry'), 'must not use non-existent client.registry namespace');
     assert(!r.includes('registry.publishConfig'), 'must not call non-existent registry.publishConfig()');
+  });
+
+  // Fix #12 / AGI-53: configPath must be shell-quoted in the generated bash command
+  test('generatePublishConfig shell-quotes configPath with spaces', () => {
+    const r = generatePublishConfig(PUBLISH_CONFIG_SCHEMA.parse({ configPath: '/my path/AGIRAILS.md', network }));
+    assert(r.includes("'/my path/AGIRAILS.md'"), 'path with spaces must be single-quoted in bash snippet');
+    assert(!r.includes('--config /my path'), 'unquoted path with space must not appear in bash snippet');
+  });
+
+  test('generatePublishConfig shell-quotes configPath with shell metacharacters', () => {
+    const r = generatePublishConfig(PUBLISH_CONFIG_SCHEMA.parse({ configPath: '/path/$(evil)/AGIRAILS.md', network }));
+    assert(r.includes("'/path/$(evil)/AGIRAILS.md'"), 'metacharacters must be wrapped in single quotes');
+    assert(!r.includes('--config /path/$(evil)'), 'unquoted metachar path must not appear');
+  });
+
+  test('generatePublishConfig shell-quotes configPath with embedded single quote', () => {
+    const r = generatePublishConfig(PUBLISH_CONFIG_SCHEMA.parse({ configPath: "it's/config.md", network }));
+    assert(r.includes("'it'\\''s/config.md'"), "embedded single quote must use the '\\'' idiom");
+  });
+});
+
+// ── shellQuote unit tests ─────────────────────────────────────────────────────
+
+describe('shellQuote', () => {
+  test('wraps a simple path in single quotes', () => {
+    assert.equal(shellQuote('AGIRAILS.md'), "'AGIRAILS.md'");
+  });
+
+  test('handles paths with spaces', () => {
+    assert.equal(shellQuote('/my path/file.md'), "'/my path/file.md'");
+  });
+
+  test("handles embedded single quote via the '\\\\'' idiom", () => {
+    assert.equal(shellQuote("it's"), "'it'\\''s'");
+  });
+
+  test('handles shell metacharacters inside single quotes', () => {
+    assert.equal(shellQuote('$(evil)'), "'$(evil)'");
+    assert.equal(shellQuote('`rm -rf`'), "'`rm -rf`'");
+    assert.equal(shellQuote('a;b'), "'a;b'");
+    assert.equal(shellQuote('a|b'), "'a|b'");
   });
 });
 

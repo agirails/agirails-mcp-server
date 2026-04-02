@@ -103,6 +103,14 @@ export function esc(s: string): string {
   return s.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, '\\n').replace(/\r/g, '\\r');
 }
 
+/**
+ * Shell-quote a string for safe embedding in a Bash command.
+ * Wraps in single quotes and escapes any embedded single quotes via the '\'' idiom.
+ */
+export function shellQuote(s: string): string {
+  return "'" + s.replace(/'/g, "'\\''") + "'";
+}
+
 // Fix #14 + Config: removed agentName/overwrite (not in ACTPClientConfig v3.0);
 // use client.getAddress() and client.info instead of client.agentAddress/agentId
 export function generateInit(params: z.infer<typeof INIT_SCHEMA>): string {
@@ -459,7 +467,7 @@ The CLI uploads to IPFS, computes the config hash, and registers it via AgentReg
 npm install -g @agirails/sdk
 
 # Publish config from ${esc(params.configPath)}
-npx agirails publish --config ${esc(params.configPath)} --network ${params.network}
+npx agirails publish --config ${shellQuote(params.configPath)} --network ${params.network}
 \`\`\`
 
 The CLI will:
