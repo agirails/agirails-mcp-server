@@ -415,6 +415,7 @@ const client = await ACTPClient.create({ mode: '${params.network}' });
 
 // getBalance() takes an address string and returns balance in USDC wei (6 decimals)
 const balanceWei = await client.getBalance(client.getAddress());
+console.log('Balance (USDC wei):', balanceWei);
 const balanceUsdc = Number(balanceWei) / 1_000_000;
 console.log('USDC balance:', balanceUsdc.toFixed(6), 'USDC');
 \`\`\`

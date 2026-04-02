@@ -212,6 +212,7 @@ describe('all generators produce output', () => {
     assert(r.includes('getAddress()'), 'must pass client.getAddress() as address arg');
     assert(!r.includes('balance.usdc'), 'must not destructure removed .usdc property');
     assert(!r.includes('balance.locked'), 'must not destructure removed .locked property');
+    assert(r.includes('balanceWei'), 'must log raw returned string value');
   });
 
   // Fix #11 (AGI-40): verifyAgent uses standalone AgentRegistry, not client.registry.verify()
