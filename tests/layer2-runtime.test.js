@@ -70,40 +70,58 @@ describe('esc()', () => {
   });
 });
 
-// ── generateRequestService: budget escaping ───────────────────────────────────
+// ── generateRequestService: SDK 3.0 contract ─────────────────────────────────
 
 describe('generateRequestService', () => {
-  const base = { agentSlug: 'test-agent', service: 'do a task', network: 'testnet' };
+  const base = { service: 'analysis', input: 'Analyze this dataset', budget: 5, network: 'testnet' };
 
-  test('budget with single quote is escaped', () => {
-    const result = generateRequestService(REQUEST_SERVICE_SCHEMA.parse({ ...base, budget: "5'50" }));
-    assert(!result.includes("budget: '5'50'"), 'unescaped single quote must not appear');
-    assert(result.includes("budget: '5\\'50'"), 'escaped form must appear');
+  test('budget is emitted as a numeric literal, not a string', () => {
+    const result = generateRequestService(REQUEST_SERVICE_SCHEMA.parse(base));
+    assert(result.includes('budget: 5'), 'budget must appear as numeric literal');
+    assert(!result.includes("budget: '5'"), 'budget must not be a quoted string');
   });
 
-  test('budget with backslash is escaped', () => {
-    const result = generateRequestService(REQUEST_SERVICE_SCHEMA.parse({ ...base, budget: '5\\50' }));
-    assert(result.includes("budget: '5\\\\50'"), 'backslash must be doubled');
+  test('uses SDK 3.0 return shape: { result, transaction }', () => {
+    const result = generateRequestService(REQUEST_SERVICE_SCHEMA.parse(base));
+    assert(result.includes('{ result, transaction }'), 'must destructure result and transaction');
+    assert(result.includes('transaction.id'), 'must reference transaction.id for the TX ID');
+    assert(!result.includes('{ txId }'), 'legacy { txId } destructure must not appear');
   });
 
-  test('budget with newline is escaped', () => {
-    const result = generateRequestService(REQUEST_SERVICE_SCHEMA.parse({ ...base, budget: '5\n50' }));
-    assert(result.includes("budget: '5\\n50'"), 'newline must be escaped');
+  test('first arg to agent.request() is service type, not agent slug', () => {
+    const result = generateRequestService(REQUEST_SERVICE_SCHEMA.parse(base));
+    assert(result.includes("agent.request('analysis'"), 'first arg must be service type name');
+  });
+
+  test('options use input field (SDK 3.0), not service field', () => {
+    const result = generateRequestService(REQUEST_SERVICE_SCHEMA.parse(base));
+    assert(result.includes("input: 'Analyze this dataset'"), 'options must include input field');
+  });
+
+  test('input with single quote is escaped', () => {
+    const result = generateRequestService(REQUEST_SERVICE_SCHEMA.parse({ ...base, input: "don't fail" }));
+    assert(!result.includes("input: 'don't fail'"), 'unescaped quote in input must not appear');
   });
 
   test('service with single quote is escaped', () => {
-    const result = generateRequestService(REQUEST_SERVICE_SCHEMA.parse({ ...base, budget: '5', service: "don't fail" }));
-    assert(!result.includes("service: 'don't fail'"), 'unescaped quote must not appear');
+    const result = generateRequestService(REQUEST_SERVICE_SCHEMA.parse({ ...base, service: "it's-a-service" }));
+    assert(!result.includes("request('it's-a-service'"), 'unescaped quote in service must not appear');
   });
 
-  test('agentSlug with special chars is escaped', () => {
-    const result = generateRequestService(REQUEST_SERVICE_SCHEMA.parse({ ...base, budget: '5', agentSlug: "agent'x" }));
-    assert(!result.includes("request('agent'x'"), 'unescaped quote in slug must not appear');
+  test('optional agentSlug includes AgentRegistry lookup in generated snippet', () => {
+    const result = generateRequestService(REQUEST_SERVICE_SCHEMA.parse({ ...base, agentSlug: 'target-agent' }));
+    assert(result.includes('AgentRegistry'), 'must include AgentRegistry import when agentSlug provided');
+    assert(result.includes("getAgentBySlug('target-agent')"), 'must resolve slug to provider address');
+  });
+
+  test('agentSlug with special chars is escaped in generated snippet', () => {
+    const result = generateRequestService(REQUEST_SERVICE_SCHEMA.parse({ ...base, agentSlug: "agent'x" }));
+    assert(!result.includes("getAgentBySlug('agent'x'"), 'unescaped quote in slug must not appear');
   });
 
   // Fix #21 (AGI-50): SDK 3.0 uses payment:received, not transaction:* events
   test('uses payment:received event, not legacy transaction:* events', () => {
-    const result = generateRequestService(REQUEST_SERVICE_SCHEMA.parse({ ...base, budget: '5' }));
+    const result = generateRequestService(REQUEST_SERVICE_SCHEMA.parse(base));
     assert(result.includes("'payment:received'"), 'must include payment:received event');
     assert(!result.includes('transaction:quoted'), 'legacy transaction:quoted must not appear');
     assert(!result.includes('transaction:committed'), 'legacy transaction:committed must not appear');
@@ -295,7 +313,14 @@ describe('shellQuote', () => {
 describe('schema validation', () => {
   test('REQUEST_SERVICE_SCHEMA rejects missing budget', () => {
     assert.throws(
-      () => REQUEST_SERVICE_SCHEMA.parse({ agentSlug: 'a', service: 'b', network: 'testnet' }),
+      () => REQUEST_SERVICE_SCHEMA.parse({ service: 'analysis', input: 'do work', network: 'testnet' }),
+      /budget/i,
+    );
+  });
+
+  test('REQUEST_SERVICE_SCHEMA rejects non-numeric budget', () => {
+    assert.throws(
+      () => REQUEST_SERVICE_SCHEMA.parse({ service: 'analysis', input: 'do work', budget: 'five', network: 'testnet' }),
       /budget/i,
     );
   });

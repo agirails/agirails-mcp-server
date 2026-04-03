@@ -433,6 +433,33 @@ describe('getQuickstart() — TypeScript pay snippet', () => {
   });
 });
 
+// ── getQuickstart — full agent snippet SDK 3.0 request contract (AGI-29 rework) ──
+
+describe('getQuickstart() — full agent snippet request contract', () => {
+  test('full agent snippet uses SDK 3.0 Agent.request(service, { input, budget: number })', () => {
+    const output = getQuickstart({ intent: 'both', language: 'typescript', network: 'testnet' });
+    assert.ok(output.includes("agent.request('analysis'"), `expected agent.request('analysis', ...) in full snippet: ${output}`);
+    assert.ok(output.includes('input:'), `expected input: field in full snippet: ${output}`);
+    assert.ok(!output.includes("budget: '10'"), `string budget '10' must not appear in full snippet: ${output}`);
+    assert.ok(!output.includes("request('other-agent-slug'"), `legacy other-agent-slug must not appear in full snippet: ${output}`);
+  });
+
+  test('full agent snippet uses SDK 3.0 return shape: { result, transaction }', () => {
+    const output = getQuickstart({ intent: 'both', language: 'typescript', network: 'testnet' });
+    assert.ok(output.includes('{ result, transaction }'), `expected SDK 3.0 destructure { result, transaction } in full snippet: ${output}`);
+    assert.ok(output.includes('transaction.id'), `expected transaction.id in full snippet: ${output}`);
+    assert.ok(!output.includes('{ result, txId }'), `legacy { result, txId } must not appear in full snippet: ${output}`);
+  });
+
+  test('full agent snippet provide() uses job.input (not job.service) as work data', () => {
+    const output = getQuickstart({ intent: 'both', language: 'typescript', network: 'testnet' });
+    // The full snippet's provide() callback must use job.input for work data
+    assert.ok(output.includes('job.input'), `expected job.input in provide() callback in full snippet: ${output}`);
+    // Template-literal usage of job.service (e.g. `${job.service}`) must not appear — comments are acceptable
+    assert.ok(!output.includes('${job.service}'), `template-literal job.service must not appear in provide() callback: ${output}`);
+  });
+});
+
 // ── getQuickstart — SDK 3.0 event names (Fix #21 / AGI-50 regression guard) ──
 
 describe('getQuickstart() — SDK 3.0 event names', () => {

@@ -18,9 +18,10 @@ export const INIT_SCHEMA = z.object({
 });
 
 export const REQUEST_SERVICE_SCHEMA = z.object({
-  agentSlug: z.string().describe('Target agent slug. Use agirails_find_agents to discover available agents.'),
-  service: z.string().describe('What you want the agent to do. Be specific — this becomes the job description.'),
-  budget: z.string().describe('Max USDC willing to pay (e.g. "5", "10.50"). Funds are locked in escrow only after quote acceptance.'),
+  service: z.string().describe('Service type to request (e.g. "translation", "analysis"). Becomes the first argument to Agent.request() in SDK 3.0.'),
+  input: z.string().describe('Work data to send to the provider (e.g. text to translate, data to analyze).'),
+  budget: z.number().describe('Max USDC willing to pay (e.g. 5, 10.50). Funds are locked in escrow only after quote acceptance.'),
+  agentSlug: z.string().optional().describe('Optional: target a specific agent slug. Resolved to a provider address via AgentRegistry.'),
   network: NetworkSchema,
 });
 
@@ -137,30 +138,38 @@ console.log('Client info:', client.info);
 }
 
 // Fix #21: changed agent.on('transaction:quoted') → agent.on('payment:received')
+// Fix AGI-29 rework: updated to SDK 3.0 Agent.request(service, { input, budget: number }) → { result, transaction }
 export function generateRequestService(params: z.infer<typeof REQUEST_SERVICE_SCHEMA>): string {
-  return `## Request Service from ${esc(params.agentSlug)}
+  const agentResolveBlock = params.agentSlug
+    ? `\n// Resolve slug to provider address for targeted request\nconst registry = new AgentRegistry({ network: '${params.network}' });\nconst agentInfo = await registry.getAgentBySlug('${esc(params.agentSlug)}');\nconst providerAddress = agentInfo?.address;\n`
+    : '';
+  const providerOption = params.agentSlug ? `\n  providerAddress,  // target specific agent` : '';
+  const importRegistry = params.agentSlug ? `\nimport { AgentRegistry } from '@agirails/sdk';` : '';
+
+  return `## Request Service: ${esc(params.service)}
 
 Initiates an ACTP transaction. Funds are NOT locked until you accept a quote.
 
 \`\`\`typescript
-import { Agent } from '@agirails/sdk';
+import { Agent } from '@agirails/sdk';${importRegistry}
 
 const agent = new Agent({ network: '${params.network}' });
 await agent.start();
-
-// Initiate — moves to INITIATED state, provider will respond with quote
-const { txId } = await agent.request('${esc(params.agentSlug)}', {
-  service: '${esc(params.service)}',
-  budget: '${esc(params.budget)}',  // max USDC (locks only after quote acceptance)
+${agentResolveBlock}
+// Initiate — SDK 3.0: first arg is service type, options use input + numeric budget
+const { result, transaction } = await agent.request('${esc(params.service)}', {
+  input: '${esc(params.input)}',
+  budget: ${params.budget},  // max USDC (locks only after quote acceptance)${providerOption}
 });
 
-console.log('Transaction ID:', txId);
+console.log('Transaction ID:', transaction.id);
+console.log('Result:', result);
 console.log('Status: INITIATED — waiting for provider quote');
 
 // Notified when provider accepts and payment flows
 agent.on('payment:received', (amount) => {
   console.log(\`Payment received: \${amount} USDC\`);
-  // Accept with: agirails_accept_quote({ txId, quotedPrice: amount, network: '${params.network}' })
+  // Accept with: agirails_accept_quote({ txId: transaction.id, quotedPrice: amount, network: '${params.network}' })
 });
 \`\`\`
 

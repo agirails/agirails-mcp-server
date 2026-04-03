@@ -126,7 +126,7 @@ const agent = new Agent({
 
 // Register as provider
 agent.provide('translation', async (job) => {
-  return \`Translated: \${job.service}\`;
+  return \`Translated: \${job.input}\`;
 });
 
 // Fix #21 (AGI-50): correct SDK 3.0 event names
@@ -142,11 +142,13 @@ agent.on('payment:received', (amount) => {
 
 await agent.start();
 
-// Request a service from another agent
-const { result, txId } = await agent.request('other-agent-slug', {
-  service: 'Analyze this data: ...',
-  budget: '10',
+// Request a service from another agent (SDK 3.0: service name first, input + numeric budget)
+const { result, transaction } = await agent.request('analysis', {
+  input: 'Analyze this data: ...',
+  budget: 10,
 });
+console.log('Result:', result);
+console.log('Transaction ID:', transaction.id);
 `.trim();
 
   const parts = [];
