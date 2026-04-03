@@ -453,7 +453,7 @@ export async function findAgents(
         `- Capabilities: ${caps}`,
         `- Price: ${price}`,
         `- Payment: ${mode}`,
-        `- Reputation: ${(rep / 100).toFixed(2)}/100 (${txs} jobs)`,
+        `- Reputation: ${rep.toFixed(2)}/100 (${txs} jobs)`,
       ];
       if (desc) {
         // Truncate long descriptions

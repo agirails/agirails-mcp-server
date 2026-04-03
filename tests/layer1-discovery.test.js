@@ -14,6 +14,7 @@ import {
   formatAgentCard,
   FIND_AGENTS_SCHEMA,
   findAgents,
+  getAgentCard,
   getQuickstart,
 } from '../dist/tools/layer1-discovery.js';
 
@@ -379,6 +380,49 @@ describe('findAgents() — keyword-only path (discover API)', () => {
       await findAgents({ keyword: 'translator', limit: 10, network: 'base-mainnet' }, () => registry);
       assert.equal(queryCallCount, 0, 'queryAgentsByService must not be called in keyword-only mode');
     });
+  });
+});
+
+// ── getAgentCard — URL pattern regression test ──────────────────────────────
+
+describe('getAgentCard() — URL pattern', () => {
+  test('requests /a/{slug}/{slug}.md, not /a/{slug}.md', async () => {
+    let capturedUrl = '';
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async (url) => {
+      capturedUrl = typeof url === 'string' ? url : url.toString();
+      return { ok: true, status: 200, text: async () => '# Test Agent Card' };
+    };
+    try {
+      await getAgentCard({ slug: 'azimuth' });
+      assert.ok(capturedUrl.includes('/a/azimuth/azimuth.md'), `URL must use /a/{slug}/{slug}.md pattern, got: ${capturedUrl}`);
+      assert.ok(!capturedUrl.endsWith('/a/azimuth.md'), `URL must NOT use /a/{slug}.md pattern, got: ${capturedUrl}`);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test('returns card content with header', async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async () => ({ ok: true, status: 200, text: async () => '# My Agent\nDescription here' });
+    try {
+      const result = await getAgentCard({ slug: 'test-agent' });
+      assert.ok(result.includes('Agent Card: test-agent'), `should include card header in: ${result}`);
+      assert.ok(result.includes('# My Agent'), `should include card body in: ${result}`);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test('returns not-found message for 404', async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async () => ({ ok: false, status: 404 });
+    try {
+      const result = await getAgentCard({ slug: 'nonexistent' });
+      assert.ok(result.includes('not found'), `should say not found in: ${result}`);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 });
 
