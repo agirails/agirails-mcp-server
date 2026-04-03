@@ -1,6 +1,6 @@
 {
   "name": "@agirails/mcp-server",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "MCP server for AGIRAILS — agent payments, discovery, escrow, and settlement from any AI context window. Works with Claude Desktop, Cursor, VS Code, Windsurf, and any MCP-compatible client.",
   "keywords": [
     "mcp",
