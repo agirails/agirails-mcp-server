@@ -175,6 +175,21 @@ describe('all generators produce output', () => {
     assert(!r.includes('kernel'), 'must not use non-existent kernel namespace');
   });
 
+  // Fix #5 regression (AGI-29): role filter must produce executable code, not just a comment
+  test('generateListTransactions role=requester produces executable filter code', () => {
+    const r = generateListTransactions(LIST_TRANSACTIONS_SCHEMA.parse({ network, role: 'requester' }));
+    assert(r.includes('client.getAddress()'), 'must call client.getAddress() to resolve own address');
+    assert(r.includes('.requester === myAddress'), 'must filter by tx.requester field');
+    assert(!r.includes('// Note:'), 'must not leave role filter as a comment');
+  });
+
+  test('generateListTransactions role=provider produces executable filter code', () => {
+    const r = generateListTransactions(LIST_TRANSACTIONS_SCHEMA.parse({ network, role: 'provider' }));
+    assert(r.includes('client.getAddress()'), 'must call client.getAddress() to resolve own address');
+    assert(r.includes('.provider === myAddress'), 'must filter by tx.provider field');
+    assert(!r.includes('// Note:'), 'must not leave role filter as a comment');
+  });
+
   // Fix #6 (AGI-35): deliver uses client.deliver(), not kernel.deliver()
   test('generateDeliver uses client.deliver()', () => {
     const r = generateDeliver(DELIVER_SCHEMA.parse({ txId, deliverable: 'the file', network }));

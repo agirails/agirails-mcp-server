@@ -297,23 +297,24 @@ if (!tx) {
 // Fix #5: client.kernel.listTransactions() → client.advanced.getAllTransactions()
 // getAllTransactions() has no filter params; filtering is applied client-side
 export function generateListTransactions(params: z.infer<typeof LIST_TRANSACTIONS_SCHEMA>): string {
-  const hasFilter = params.state !== 'all' || params.role !== 'all';
+  const stateFilter = params.state !== 'all' ? `  .filter((tx) => tx.state === '${params.state}')` : '';
+  const roleFilter = params.role !== 'all'
+    ? `  .filter((tx) => tx.${params.role === 'requester' ? 'requester' : 'provider'} === myAddress)`
+    : '';
+  const hasFilter = stateFilter !== '' || roleFilter !== '';
+  const addressLine = params.role !== 'all' ? `\nconst myAddress = client.getAddress();` : '';
+  const filterChain = hasFilter
+    ? `\nconst transactions = allTransactions\n${[stateFilter, roleFilter].filter(Boolean).join('\n')}\n  .slice(0, ${params.limit});`
+    : `\nconst transactions = allTransactions.slice(0, ${params.limit});`;
   return `## List Transactions
 
 \`\`\`typescript
 import { ACTPClient } from '@agirails/sdk';
 
-const client = await ACTPClient.create({ mode: '${params.network}' });
+const client = await ACTPClient.create({ mode: '${params.network}' });${addressLine}
 
 // getAllTransactions() returns all transactions; filter client-side
-const allTransactions = await client.advanced.getAllTransactions();
-${hasFilter ? `
-// Apply filters
-const transactions = allTransactions
-${params.state !== 'all' ? `  .filter((tx) => tx.state === '${params.state}')` : ''}${params.role !== 'all' ? `
-  // Note: filter by role (requester/provider) using client.getAddress()` : ''}
-  .slice(0, ${params.limit});` : `
-const transactions = allTransactions.slice(0, ${params.limit});`}
+const allTransactions = await client.advanced.getAllTransactions();${filterChain}
 
 for (const tx of transactions) {
   console.log(\`[\${tx.state}] \${tx.id} — \${tx.amount}\`);
