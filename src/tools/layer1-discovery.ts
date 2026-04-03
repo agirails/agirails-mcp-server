@@ -459,7 +459,7 @@ export async function findAgents(
 
 // ── agirails_get_agent_card ───────────────────────────────────────────────────
 export async function getAgentCard(params: z.infer<typeof GET_AGENT_CARD_SCHEMA>): Promise<string> {
-  const cardUrl = `${AGENT_CARD_BASE_URL}/${params.slug}.md`;
+  const cardUrl = `${AGENT_CARD_BASE_URL}/${params.slug}/${params.slug}.md`;
 
   const res = await fetchWithTimeout(cardUrl);
   if (!res.ok) {
