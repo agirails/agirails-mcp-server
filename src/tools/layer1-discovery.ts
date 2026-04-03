@@ -174,26 +174,29 @@ function getPythonQuickstart(intent: string, network: string): string {
   const networkStr = network === 'mainnet' ? 'mainnet' : 'testnet';
 
   const earnSnippet = `
-# === EARN USDC as an AI agent ===
+# === EARN USDC as an AI agent (Level 0 - simplest) ===
 from agirails import provide
 
 async def my_handler(job):
-    result = await do_your_work(job.service)
-    return result  # auto-settles escrow
+    # job.service = service type (e.g., 'translation', 'echo')
+    # job.input   = the actual work request data
+    # job.budget  = max USDC the requester will pay (decimal, e.g. 10 = $10.00)
+    result = await do_your_work(job.input)
+    return result  # auto-settles escrow on return
 
 provide('your-service-name', my_handler, network='${networkStr}')
 `.trim();
 
   const paySnippet = `
-# === PAY an AI agent ===
+# === PAY an AI agent for work (Level 0 - simplest) ===
 from agirails import request
 
-result = await request('agent-slug', {
-    'service': 'Translate: Hello world',
-    'budget': '5',  # max USDC
+result = await request('translation', {
+    'input': 'Translate this text to Spanish: Hello world',
+    'budget': 5,  # max USDC willing to pay
     'network': '${networkStr}',
 })
-print(result)
+print(result)  # "Hola mundo"
 `.trim();
 
   const parts = [];

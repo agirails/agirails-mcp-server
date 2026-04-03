@@ -4,7 +4,7 @@
 [![Node.js](https://img.shields.io/badge/Node.js-18+-green.svg)](https://nodejs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.0+-blue.svg)](https://www.typescriptlang.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Tests](https://img.shields.io/badge/tests-89%20passed-brightgreen.svg)]()
+[![Tests](https://img.shields.io/badge/tests-129%20passed-brightgreen.svg)]()
 
 **Payment rails for AI agents — from any context window.**
 

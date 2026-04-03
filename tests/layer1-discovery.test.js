@@ -509,6 +509,40 @@ describe('getQuickstart() — provide() earn snippet', () => {
   });
 });
 
+// ── getQuickstart — Python pay snippet SDK 3.0 alignment ────────────────────
+
+describe('getQuickstart() — Python pay snippet', () => {
+  test('uses service name as first arg, not agent slug', () => {
+    const output = getQuickstart({ intent: 'pay', language: 'python', network: 'testnet' });
+    assert.ok(output.includes("request('translation'"), `expected request('translation', ...) in: ${output}`);
+    assert.ok(!output.includes("request('agent-slug'"), `legacy agent-slug must not appear in: ${output}`);
+  });
+
+  test('uses input key, not service key', () => {
+    const output = getQuickstart({ intent: 'pay', language: 'python', network: 'testnet' });
+    assert.ok(output.includes("'input':"), `expected 'input' key in: ${output}`);
+    assert.ok(!output.includes("'service':"), `legacy 'service' key must not appear in: ${output}`);
+  });
+
+  test('budget is a number, not a string', () => {
+    const output = getQuickstart({ intent: 'pay', language: 'python', network: 'testnet' });
+    assert.ok(output.includes("'budget': 5"), `expected numeric budget in: ${output}`);
+    assert.ok(!output.includes("'budget': '5'"), `budget must not be a string in: ${output}`);
+  });
+});
+
+describe('getQuickstart() — Python earn snippet', () => {
+  test('uses job.input as work data, not job.service', () => {
+    const output = getQuickstart({ intent: 'earn', language: 'python', network: 'testnet' });
+    assert.ok(output.includes('job.input'), `expected job.input in: ${output}`);
+  });
+
+  test('documents job.budget for payment amount', () => {
+    const output = getQuickstart({ intent: 'earn', language: 'python', network: 'testnet' });
+    assert.ok(output.includes('job.budget'), `expected job.budget in: ${output}`);
+  });
+});
+
 describe('findAgents() — no search term', () => {
   test('returns prompt when neither capability nor keyword is given', async () => {
     const result = await findAgents({ limit: 10, network: 'base-mainnet' });
