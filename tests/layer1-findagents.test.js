@@ -1,12 +1,12 @@
 /**
- * Behavioral tests for findAgents — AgentRegistry-based discovery (capability and keyword).
- * All tests run offline: AgentRegistry is injected as a mock.
+ * Behavioral tests for findAgents — capability (on-chain) and keyword (discover API).
+ * All tests run offline: AgentRegistry is injected as a mock, fetch is stubbed.
  * Run after build: node --test tests/
  */
 
-import { test, describe } from 'node:test';
+import { test, describe, mock } from 'node:test';
 import assert from 'node:assert/strict';
-import { findAgents, DiscoverBackendError } from '../dist/tools/layer1-discovery.js';
+import { findAgents } from '../dist/tools/layer1-discovery.js';
 
 // ── Mock helpers ──────────────────────────────────────────────────────────────
 
@@ -21,7 +21,7 @@ function makeProfile(addr = '0xabc123') {
   };
 }
 
-function makeRegistry({ addresses = [], keywordAddresses = addresses, profiles = null, services = [], queryError = null } = {}) {
+function makeRegistry({ addresses = [], profiles = null, services = [], queryError = null } = {}) {
   return {
     computeServiceTypeHash(s) {
       return '0x' + Buffer.from(s).toString('hex').slice(0, 8);
@@ -31,7 +31,7 @@ function makeRegistry({ addresses = [], keywordAddresses = addresses, profiles =
       return addresses;
     },
     async findAgentsByKeyword(_keyword, _limit) {
-      return keywordAddresses;
+      return [];
     },
     async getAgent(addr) {
       if (profiles) return profiles[addr] ?? null;
@@ -40,6 +40,33 @@ function makeRegistry({ addresses = [], keywordAddresses = addresses, profiles =
     async getServiceDescriptors(_addr) {
       return services;
     },
+  };
+}
+
+/** Build a mock discover API response */
+function makeDiscoverResponse(agents = []) {
+  return {
+    ok: true,
+    status: 200,
+    json: async () => ({ agents, total: agents.length }),
+  };
+}
+
+function makeDiscoverAgent(overrides = {}) {
+  return {
+    slug: 'test-agent',
+    wallet_address: '0xabc123',
+    published_config: {
+      name: 'Test Agent',
+      description: 'A test agent for unit tests',
+      capabilities: ['translation'],
+      pricing: { amount: '5', currency: 'USDC', unit: 'job' },
+      payment_mode: 'actp',
+    },
+    stats: { reputation_score: 0, completed_transactions: 0 },
+    card_url: 'https://www.agirails.app/a/test-agent/test-agent.md',
+    profile_url: 'https://www.agirails.app/a/test-agent',
+    ...overrides,
   };
 }
 
@@ -95,7 +122,6 @@ describe('findAgents() — capability path', () => {
 
   test('filters cards by keyword when both capability and keyword are given', async () => {
     const reg = makeRegistry({ addresses: ['0xaaa', '0xbbb'] });
-    // Distinguish the two profiles by endpoint
     reg.getAgent = async (addr) => ({
       ...makeProfile(addr),
       endpoint: addr === '0xaaa' ? 'https://french-translate.io' : 'https://unrelated.io',
@@ -130,159 +156,126 @@ describe('findAgents() — capability path', () => {
 });
 
 // ── Keyword-only path ─────────────────────────────────────────────────────────
-// Keyword-only discovery uses findAgentsByKeyword (keyword-capable off-chain source)
-// to obtain candidate addresses, then enriches them from AgentRegistry and applies
-// a free-text filter. queryAgentsByService is NOT called — keyword-as-serviceType
-// returns zero results for domain/endpoint terms even when matching agents exist.
+// Keyword-only discovery calls the discover API directly (fetch) and formats
+// the response. It does NOT use AgentRegistry for enrichment.
 
 describe('findAgents() — keyword-only path', () => {
-  test('uses findAgentsByKeyword (not queryAgentsByService) to get candidates', async () => {
-    let queryCallCount = 0;
-    const registry = makeRegistry({ keywordAddresses: ['0xabc123'] });
-    registry.queryAgentsByService = async (...args) => { queryCallCount++; return []; };
-    // Set endpoint to contain the keyword so the free-text filter passes
-    registry.getAgent = async (addr) => ({ ...makeProfile(addr), endpoint: 'https://translator.example.com' });
-
-    const result = await findAgents(
-      { keyword: 'translator', limit: 5, network: 'base-mainnet' },
-      () => registry,
-    );
-
-    assert.equal(queryCallCount, 0, 'queryAgentsByService must not be called in keyword-only mode');
-    assert.ok(result.includes('0xabc123'), 'card should include agent address');
-    assert.ok(result.includes('AGIRAILS Agent Registry'), 'should have registry header');
+  test('returns agent cards from discover API response', async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async () => makeDiscoverResponse([makeDiscoverAgent()]);
+    try {
+      const result = await findAgents(
+        { keyword: 'test', limit: 5, network: 'base-mainnet' },
+        () => makeRegistry(),
+      );
+      assert.ok(result.includes('Test Agent'), 'should include agent name');
+      assert.ok(result.includes('test-agent'), 'should include slug');
+      assert.ok(result.includes('0xabc123'), 'should include wallet address');
+      assert.ok(result.includes('AGIRAILS Agents'), 'should have header');
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 
-  test('realistic: registry returns [] for unknown hash; keyword-only succeeds via profile match', async () => {
-    // Simulates realistic on-chain behavior: "translate-api" is not a registered service
-    // type hash, so queryAgentsByService → []. But findAgentsByKeyword finds the address
-    // via off-chain keyword search, and the agent's endpoint contains the keyword.
-    const registry = makeRegistry({
-      addresses: [],                    // queryAgentsByService always empty (unknown hash)
-      keywordAddresses: ['0xabc123'],   // findAgentsByKeyword returns match
-    });
-    registry.getAgent = async (addr) => ({
-      ...makeProfile(addr),
-      endpoint: 'https://translate-api.example.io',
-    });
-    registry.getServiceDescriptors = async () => [
-      { serviceType: 'data-processing', schemaURI: undefined, minPrice: 1000000n, maxPrice: 5000000n, avgCompletionTime: 30 },
-    ];
-
-    const result = await findAgents(
-      { keyword: 'translate-api', limit: 5, network: 'base-mainnet' },
-      () => registry,
-    );
-
-    assert.ok(result.includes('translate-api.example.io'), 'endpoint keyword match should appear');
-    assert.ok(!result.includes('No agents found'), 'should not report no agents');
-  });
-
-  test('filters keyword candidates by free-text across profile fields', async () => {
-    const reg = makeRegistry({ keywordAddresses: ['0xaaa', '0xbbb'] });
-    reg.getAgent = async (addr) => ({
-      ...makeProfile(addr),
-      endpoint: addr === '0xaaa' ? 'https://translate-api.example.io' : 'https://unrelated.io',
-    });
-    reg.getServiceDescriptors = async () => [];
-
-    const result = await findAgents(
-      { keyword: 'translate-api', limit: 10, network: 'base-mainnet' },
-      () => reg,
-    );
-
-    assert.ok(result.includes('translate-api.example.io'), 'matching endpoint should appear');
-    assert.ok(!result.includes('unrelated.io'), 'non-matching endpoint should be filtered out');
-  });
-
-  test('returns no-match message when keyword not found in any profile field', async () => {
-    const registry = makeRegistry({ keywordAddresses: ['0xabc123'] });
-    const result = await findAgents(
-      { keyword: 'zzz-unmatched', limit: 5, network: 'base-mainnet' },
-      () => registry,
-    );
-    assert.ok(result.includes('No agents matched keyword'), 'should say no keyword match');
-    assert.ok(result.includes('zzz-unmatched'), 'should mention the keyword');
-  });
-
-  test('returns no-agents message when findAgentsByKeyword returns empty list', async () => {
-    const registry = makeRegistry({ keywordAddresses: [] });
-    const result = await findAgents(
-      { keyword: 'nonexistent', limit: 5, network: 'base-mainnet' },
-      () => registry,
-    );
-    assert.ok(result.includes('No agents found'), 'should say no agents found');
-    assert.ok(result.includes('nonexistent'), 'should mention the keyword');
-  });
-
-  test('returns connect-error message when registry factory throws for keyword path', async () => {
-    const result = await findAgents(
-      { keyword: 'translator', limit: 5, network: 'base-sepolia' },
-      () => { throw new Error('not deployed on this network'); },
-    );
-    assert.ok(result.includes('Could not connect'), 'should mention connection error');
-    assert.ok(result.includes('not deployed on this network'), 'should include error text');
-  });
-
-  test('preserves network selection in keyword-only path', async () => {
-    let capturedNetwork = '';
-    await findAgents(
-      { keyword: 'translator', limit: 5, network: 'base-sepolia' },
-      (networkName) => { capturedNetwork = networkName; return makeRegistry({ keywordAddresses: [] }); },
-    );
-    assert.equal(capturedNetwork, 'base-sepolia', 'should pass network to registry factory');
+  test('returns no-agents message when discover API returns empty list', async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async () => makeDiscoverResponse([]);
+    try {
+      const result = await findAgents(
+        { keyword: 'nonexistent', limit: 5, network: 'base-mainnet' },
+        () => makeRegistry(),
+      );
+      assert.ok(result.includes('No agents found'), 'should say no agents found');
+      assert.ok(result.includes('nonexistent'), 'should mention keyword');
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 
   test('returns backend-unavailable message when discover API returns HTTP 500', async () => {
-    const registry = makeRegistry();
-    registry.findAgentsByKeyword = async () => {
-      throw new DiscoverBackendError(500, 'discover API returned HTTP 500');
-    };
-    const result = await findAgents(
-      { keyword: 'translator', limit: 5, network: 'base-mainnet' },
-      () => registry,
-    );
-    assert.ok(result.includes('discover backend is currently unavailable'), 'should report backend unavailable');
-    assert.ok(result.includes('HTTP 500'), 'should include HTTP status');
-    assert.ok(!result.includes('No agents found'), 'must not mislead with no-agents message');
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async () => ({ ok: false, status: 500 });
+    try {
+      const result = await findAgents(
+        { keyword: 'translator', limit: 5, network: 'base-mainnet' },
+        () => makeRegistry(),
+      );
+      assert.ok(result.includes('discover backend is currently unavailable'), 'should report backend unavailable');
+      assert.ok(result.includes('500'), 'should include HTTP status');
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 
-  test('returns backend-unavailable message when discover API returns HTTP 503', async () => {
-    const registry = makeRegistry();
-    registry.findAgentsByKeyword = async () => {
-      throw new DiscoverBackendError(503, 'discover API returned HTTP 503');
-    };
-    const result = await findAgents(
-      { keyword: 'escrow', limit: 5, network: 'base-mainnet' },
-      () => registry,
-    );
-    assert.ok(result.includes('discover backend is currently unavailable'), 'should report backend unavailable');
-    assert.ok(result.includes('HTTP 503'), 'should include HTTP status');
-    assert.ok(!result.includes('No agents found'), 'must not mislead with no-agents message');
+  test('returns backend-unavailable message on network error', async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async () => { throw new Error('ECONNREFUSED'); };
+    try {
+      const result = await findAgents(
+        { keyword: 'translator', limit: 5, network: 'base-mainnet' },
+        () => makeRegistry(),
+      );
+      assert.ok(result.includes('discover backend is currently unavailable'), 'should report backend unavailable');
+      assert.ok(result.includes('ECONNREFUSED'), 'should include error message');
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 
-  test('returns backend-unavailable message on network error (status 0)', async () => {
-    const registry = makeRegistry();
-    registry.findAgentsByKeyword = async () => {
-      throw new DiscoverBackendError(0, 'fetch failed');
-    };
-    const result = await findAgents(
-      { keyword: 'translator', limit: 5, network: 'base-mainnet' },
-      () => registry,
-    );
-    assert.ok(result.includes('discover backend is currently unavailable'), 'should report backend unavailable');
-    assert.ok(!result.includes('No agents found'), 'must not mislead with no-agents message');
+  test('includes capabilities and pricing in output', async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async () => makeDiscoverResponse([makeDiscoverAgent({
+      published_config: {
+        name: 'Price Agent',
+        description: 'Has pricing',
+        capabilities: ['data-analysis', 'reporting'],
+        pricing: { amount: '10', currency: 'USDC', unit: 'job' },
+        payment_mode: 'actp',
+      },
+    })]);
+    try {
+      const result = await findAgents(
+        { keyword: 'data', limit: 5, network: 'base-mainnet' },
+        () => makeRegistry(),
+      );
+      assert.ok(result.includes('data-analysis'), 'should include capabilities');
+      assert.ok(result.includes('$10'), 'should include price');
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 
-  test('rethrows non-DiscoverBackendError from findAgentsByKeyword', async () => {
+  test('truncates long descriptions', async () => {
+    const longDesc = 'A'.repeat(300);
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async () => makeDiscoverResponse([makeDiscoverAgent({
+      published_config: { name: 'Long', description: longDesc, capabilities: [] },
+    })]);
+    try {
+      const result = await findAgents(
+        { keyword: 'long', limit: 5, network: 'base-mainnet' },
+        () => makeRegistry(),
+      );
+      assert.ok(result.includes('…'), 'should truncate with ellipsis');
+      assert.ok(!result.includes('A'.repeat(300)), 'should not include full 300-char description');
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test('does not use AgentRegistry for keyword path (no queryAgentsByService call)', async () => {
+    let queryCallCount = 0;
     const registry = makeRegistry();
-    registry.findAgentsByKeyword = async () => {
-      throw new Error('unexpected internal error');
-    };
-    await assert.rejects(
-      () => findAgents({ keyword: 'translator', limit: 5, network: 'base-mainnet' }, () => registry),
-      /unexpected internal error/,
-    );
+    registry.queryAgentsByService = async () => { queryCallCount++; return []; };
+
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async () => makeDiscoverResponse([makeDiscoverAgent()]);
+    try {
+      await findAgents({ keyword: 'test', limit: 5, network: 'base-mainnet' }, () => registry);
+      assert.equal(queryCallCount, 0, 'queryAgentsByService must not be called in keyword-only mode');
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 });
 

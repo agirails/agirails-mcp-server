@@ -311,87 +311,74 @@ describe('findAgents() — capability path (AgentRegistry-backed)', () => {
   });
 });
 
-describe('findAgents() — keyword-only path (AgentRegistry-backed)', () => {
-  test('returns agent cards when findAgentsByKeyword returns matching addresses', async () => {
-    const registry = buildMockRegistry({ keywordAddresses: [MOCK_ADDR_1] });
-    const result = await findAgents(
-      { keyword: 'translator', limit: 10, network: 'base-mainnet' },
-      () => registry,
-    );
-    assert.ok(result.includes('AGIRAILS Agent Registry'), `expected registry header in: ${result}`);
-    assert.ok(result.includes('translator.example.com'), `endpoint should appear in: ${result}`);
-  });
+describe('findAgents() — keyword-only path (discover API)', () => {
+  // Helper: stub globalThis.fetch for keyword path tests
+  function withFetchStub(response, fn) {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async () => response;
+    return fn().finally(() => { globalThis.fetch = originalFetch; });
+  }
 
-  test('does NOT use keyword as service-type hash — queryAgentsByService is never called', async () => {
-    let queryCallCount = 0;
-    const registry = buildMockRegistry({ keywordAddresses: [MOCK_ADDR_1] });
-    const origQuery = registry.queryAgentsByService;
-    registry.queryAgentsByService = async (...args) => { queryCallCount++; return origQuery(...args); };
+  function mockDiscoverResponse(agents) {
+    return { ok: true, status: 200, json: async () => ({ agents, total: agents.length }) };
+  }
 
-    await findAgents({ keyword: 'translate-api', limit: 10, network: 'base-mainnet' }, () => registry);
-    assert.equal(queryCallCount, 0, 'queryAgentsByService must not be called in keyword-only mode');
-  });
+  function mockAgent(overrides = {}) {
+    return {
+      slug: 'translator-agent',
+      wallet_address: MOCK_ADDR_1,
+      published_config: { name: 'Translator', description: 'Translates text', capabilities: ['translation'], pricing: { amount: '5', currency: 'USDC', unit: 'job' }, payment_mode: 'actp' },
+      stats: { reputation_score: 9500, completed_transactions: 42 },
+      ...overrides,
+    };
+  }
 
-  test('realistic: registry returns [] for unknown hash; keyword-only still succeeds via profile match', async () => {
-    // Simulates a realistic registry where no agent is registered under the "translate-api"
-    // service-type hash, but an agent exists whose endpoint contains the keyword.
-    const registry = buildMockRegistry({
-      addresses: [],             // queryAgentsByService → always empty (realistic for unknown hash)
-      keywordAddresses: [MOCK_ADDR_1], // findAgentsByKeyword → returns the matching address
+  test('returns agent cards from discover API', async () => {
+    await withFetchStub(mockDiscoverResponse([mockAgent()]), async () => {
+      const result = await findAgents({ keyword: 'translator', limit: 10, network: 'base-mainnet' });
+      assert.ok(result.includes('Translator'), `expected agent name in: ${result}`);
+      assert.ok(result.includes('translator-agent'), `expected slug in: ${result}`);
+      assert.ok(result.includes(MOCK_ADDR_1), `expected address in: ${result}`);
     });
-    // MOCK_REGISTRY_PROFILE_1.endpoint = 'https://translator.example.com' — keyword 'translator' matches
-    const result = await findAgents(
-      { keyword: 'translator', limit: 10, network: 'base-mainnet' },
-      () => registry,
-    );
-    assert.ok(!result.includes('No agents found'), `should find agents via keyword source in: ${result}`);
-    assert.ok(result.includes('AGIRAILS Agent Registry'), `should have registry header in: ${result}`);
   });
 
-  test('returns no-agents message when findAgentsByKeyword returns empty list', async () => {
-    const registry = buildMockRegistry({ keywordAddresses: [] });
-    const result = await findAgents({ keyword: 'nonexistent', limit: 10, network: 'base-mainnet' }, () => registry);
-    assert.ok(result.includes('No agents found for keyword'), `expected no-agents message in: ${result}`);
-    assert.ok(result.includes('nonexistent'), `should mention keyword in: ${result}`);
+  test('returns no-agents message when discover returns empty list', async () => {
+    await withFetchStub(mockDiscoverResponse([]), async () => {
+      const result = await findAgents({ keyword: 'nonexistent', limit: 10, network: 'base-mainnet' });
+      assert.ok(result.includes('No agents found for keyword'), `expected no-agents message in: ${result}`);
+      assert.ok(result.includes('nonexistent'), `should mention keyword in: ${result}`);
+    });
   });
 
-  test('filters cards by keyword across profile fields (endpoint/DID/serviceType)', async () => {
-    const MOCK_ADDR_3 = '0x0000000000000000000000000000000000000003';
-    const registry = buildMockRegistry({ keywordAddresses: [MOCK_ADDR_1, MOCK_ADDR_3] });
-    // ADDR_1 → endpoint contains 'translator'; ADDR_3 → null profile (dropped)
-    const result = await findAgents(
-      { keyword: 'translator', limit: 10, network: 'base-mainnet' },
-      () => registry,
-    );
-    assert.ok(result.includes('translator.example.com'), `matching endpoint should appear in: ${result}`);
+  test('returns backend-unavailable on HTTP error', async () => {
+    await withFetchStub({ ok: false, status: 503 }, async () => {
+      const result = await findAgents({ keyword: 'translator', limit: 10, network: 'base-mainnet' });
+      assert.ok(result.includes('discover backend is currently unavailable'), `expected unavailable in: ${result}`);
+      assert.ok(result.includes('503'), `expected status code in: ${result}`);
+    });
   });
 
-  test('returns no-keyword-match when keyword does not appear in any profile field', async () => {
-    const registry = buildMockRegistry({ keywordAddresses: [MOCK_ADDR_1] });
-    const result = await findAgents(
-      { keyword: 'zzznomatch', limit: 10, network: 'base-mainnet' },
-      () => registry,
-    );
-    assert.ok(result.includes('No agents matched keyword'), `expected no-match message in: ${result}`);
-    assert.ok(result.includes('zzznomatch'), `should mention keyword in: ${result}`);
+  test('returns backend-unavailable on network error', async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async () => { throw new Error('ECONNREFUSED'); };
+    try {
+      const result = await findAgents({ keyword: 'translator', limit: 10, network: 'base-mainnet' });
+      assert.ok(result.includes('discover backend is currently unavailable'), `expected unavailable in: ${result}`);
+      assert.ok(result.includes('ECONNREFUSED'), `expected error text in: ${result}`);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 
-  test('returns connect-error message when registry factory throws for keyword path', async () => {
-    const result = await findAgents(
-      { keyword: 'translation', limit: 10, network: 'base-mainnet' },
-      () => { throw new Error('not deployed on this network'); },
-    );
-    assert.ok(result.includes('Could not connect'), `expected connect-error in: ${result}`);
-    assert.ok(result.includes('not deployed on this network'), `should include error text in: ${result}`);
-  });
+  test('does NOT call queryAgentsByService in keyword-only mode', async () => {
+    let queryCallCount = 0;
+    const registry = buildMockRegistry();
+    registry.queryAgentsByService = async () => { queryCallCount++; return []; };
 
-  test('preserves network selection in keyword-only path', async () => {
-    let capturedNetwork = '';
-    await findAgents(
-      { keyword: 'translation', limit: 5, network: 'base-sepolia' },
-      (networkName) => { capturedNetwork = networkName; return buildMockRegistry({ keywordAddresses: [] }); },
-    );
-    assert.equal(capturedNetwork, 'base-sepolia', 'should pass network to registry factory');
+    await withFetchStub(mockDiscoverResponse([mockAgent()]), async () => {
+      await findAgents({ keyword: 'translator', limit: 10, network: 'base-mainnet' }, () => registry);
+      assert.equal(queryCallCount, 0, 'queryAgentsByService must not be called in keyword-only mode');
+    });
   });
 });
 

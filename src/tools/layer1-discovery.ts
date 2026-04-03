@@ -294,9 +294,9 @@ function buildReadOnlyRegistry(networkName: string): AgentRegistryLike {
       if (!res.ok) {
         throw new DiscoverBackendError(res.status, `discover API returned HTTP ${res.status}`);
       }
-      const data = await res.json() as { agents?: Array<{ address?: string }> };
+      const data = await res.json() as { agents?: Array<{ address?: string; wallet_address?: string }> };
       return (data.agents ?? [])
-        .map((a) => a.address)
+        .map((a) => a.wallet_address ?? a.address)
         .filter((addr): addr is string => typeof addr === 'string');
     },
     getAgent: (addr: string) => reg.getAgent(addr),
@@ -397,23 +397,76 @@ export async function findAgents(
       return `No agents found for capability "${params.capability}" on ${networkName}. Try a different service type or browse https://www.agirails.app/agents`;
     }
   } else {
-    // Keyword-only path: use a keyword-capable off-chain source to obtain candidate
-    // addresses, then enrich from AgentRegistry. We do NOT hash the keyword as a
-    // service type — unknown keywords produce zero on-chain results for domain/endpoint
-    // terms (e.g. "translate-api") even though matching agents exist.
+    // Keyword-only path: query the discover API directly and format results.
+    // Unlike the capability path (on-chain AgentRegistry), keyword search uses the
+    // off-chain discover backend which returns full agent profiles — no on-chain
+    // enrichment needed (most agents aren't on-chain registered yet).
+    const url = `${DISCOVER_URL}?search=${encodeURIComponent(params.keyword!)}&limit=${params.limit}`;
+    let res: Response;
     try {
-      addresses = await registry.findAgentsByKeyword(params.keyword!, params.limit);
+      res = await fetchWithTimeout(url);
     } catch (err) {
-      if (err instanceof DiscoverBackendError) {
-        const detail = err.status > 0 ? ` (HTTP ${err.status})` : ` (${err.message})`;
-        return `The AGIRAILS discover backend is currently unavailable${detail}. Browse agents at https://www.agirails.app/agents`;
-      }
-      throw err;
+      const msg = err instanceof Error ? err.message : 'network error';
+      return `The AGIRAILS discover backend is currently unavailable (${msg}). Browse agents at https://www.agirails.app/agents`;
+    }
+    if (!res.ok) {
+      return `The AGIRAILS discover backend is currently unavailable (HTTP ${res.status}). Browse agents at https://www.agirails.app/agents`;
     }
 
-    if (addresses.length === 0) {
+    const data = await res.json() as {
+      agents?: Array<{
+        slug?: string;
+        wallet_address?: string;
+        published_config?: {
+          name?: string;
+          description?: string;
+          capabilities?: string[];
+          pricing?: { amount?: string; currency?: string; unit?: string };
+          payment_mode?: string;
+        };
+        stats?: { reputation_score?: number; completed_transactions?: number };
+        card_url?: string;
+        profile_url?: string;
+      }>;
+      total?: number;
+    };
+
+    const agents = data.agents ?? [];
+    if (agents.length === 0) {
       return `No agents found for keyword "${params.keyword}" on ${networkName}. Try a different keyword or browse https://www.agirails.app/agents`;
     }
+
+    const cards: string[] = agents.map((a, i) => {
+      const name = a.published_config?.name ?? a.slug ?? 'Unknown';
+      const desc = a.published_config?.description ?? '';
+      const caps = a.published_config?.capabilities?.join(', ') ?? 'N/A';
+      const pricing = a.published_config?.pricing;
+      const price = pricing ? `$${pricing.amount ?? '?'} ${pricing.currency ?? 'USDC'}/${pricing.unit ?? 'job'}` : 'N/A';
+      const mode = a.published_config?.payment_mode ?? 'actp';
+      const rep = a.stats?.reputation_score ?? 0;
+      const txs = a.stats?.completed_transactions ?? 0;
+
+      const lines = [
+        `**[${i + 1}] ${name}**`,
+        `- Slug: \`${a.slug}\``,
+        `- Address: \`${a.wallet_address ?? 'N/A'}\``,
+        `- Capabilities: ${caps}`,
+        `- Price: ${price}`,
+        `- Payment: ${mode}`,
+        `- Reputation: ${(rep / 100).toFixed(2)}/100 (${txs} jobs)`,
+      ];
+      if (desc) {
+        // Truncate long descriptions
+        const short = desc.length > 200 ? desc.slice(0, 200) + '…' : desc;
+        lines.push(`- Description: ${short.replace(/\n/g, ' ')}`);
+      }
+      return lines.join('\n');
+    });
+
+    const header = `## AGIRAILS Agents — ${networkName}\n\nFound ${agents.length} agent(s) for \`${params.keyword}\`:\n`;
+    const footer = `\n> Use \`agirails_get_agent_card\` with an agent's slug for full covenant and DID details.\n> Browse all agents: https://www.agirails.app/agents`;
+
+    return [header, ...cards, footer].join('\n\n');
   }
 
   // Resolve profiles + service descriptors from AgentRegistry (up to limit, in parallel)
