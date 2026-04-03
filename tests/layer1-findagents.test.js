@@ -30,9 +30,6 @@ function makeRegistry({ addresses = [], profiles = null, services = [], queryErr
       if (queryError) throw queryError;
       return addresses;
     },
-    async findAgentsByKeyword(_keyword, _limit) {
-      return [];
-    },
     async getAgent(addr) {
       if (profiles) return profiles[addr] ?? null;
       return makeProfile(addr);

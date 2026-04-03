@@ -207,7 +207,6 @@ const MOCK_REGISTRY_SERVICES_1 = [
 /** Build a mock AgentRegistryLike that the registryFactory can return. */
 function buildMockRegistry({
   addresses = [MOCK_ADDR_1],
-  keywordAddresses = [MOCK_ADDR_1],
   profile = MOCK_REGISTRY_PROFILE_1,
   services = MOCK_REGISTRY_SERVICES_1,
   queryError = null,
@@ -219,7 +218,6 @@ function buildMockRegistry({
       if (queryError) throw queryError;
       return addresses;
     },
-    findAgentsByKeyword: async (_keyword, _limit) => keywordAddresses,
     getAgent: async (addr) => (addr === MOCK_ADDR_1 ? profile : null),
     getServiceDescriptors: async (addr) => (addr === MOCK_ADDR_1 ? services : []),
   };

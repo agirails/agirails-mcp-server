@@ -223,8 +223,6 @@ print(result)  # "Hola mundo"
 export interface AgentRegistryLike {
   computeServiceTypeHash(serviceType: string): string;
   queryAgentsByService(params: { serviceTypeHash: string; limit: number }): Promise<string[]>;
-  /** Return agent addresses matching a free-text keyword (off-chain keyword-capable source). */
-  findAgentsByKeyword(keyword: string, limit: number): Promise<string[]>;
   getAgent(agentAddress: string): Promise<{
     agentAddress: string;
     did: string;
@@ -245,19 +243,9 @@ export interface AgentRegistryLike {
 
 const DISCOVER_URL = 'https://www.agirails.app/api/v1/discover';
 
-/** Thrown when the discover backend returns non-2xx or a network error occurs. */
-export class DiscoverBackendError extends Error {
-  constructor(public readonly status: number, message: string) {
-    super(message);
-    this.name = 'DiscoverBackendError';
-  }
-}
-
 /**
  * Build an AgentRegistry read-only instance for the given network.
  * Uses a JsonRpcProvider (no private key required for reads).
- * Returns a wrapper that satisfies AgentRegistryLike, adding findAgentsByKeyword
- * via the AGIRAILS off-chain discover API (keyword-capable candidate source).
  */
 function buildReadOnlyRegistry(networkName: string): AgentRegistryLike {
   const networkConfig = getNetwork(networkName);
@@ -283,22 +271,6 @@ function buildReadOnlyRegistry(networkName: string): AgentRegistryLike {
     computeServiceTypeHash: (s: string) => reg.computeServiceTypeHash(s),
     queryAgentsByService: (params: { serviceTypeHash: string; limit: number }) =>
       reg.queryAgentsByService(params),
-    async findAgentsByKeyword(keyword: string, limit: number): Promise<string[]> {
-      const url = `${DISCOVER_URL}?search=${encodeURIComponent(keyword)}&limit=${limit}`;
-      let res: Response;
-      try {
-        res = await fetchWithTimeout(url);
-      } catch (err) {
-        throw new DiscoverBackendError(0, err instanceof Error ? err.message : 'network error');
-      }
-      if (!res.ok) {
-        throw new DiscoverBackendError(res.status, `discover API returned HTTP ${res.status}`);
-      }
-      const data = await res.json() as { agents?: Array<{ address?: string; wallet_address?: string }> };
-      return (data.agents ?? [])
-        .map((a) => a.wallet_address ?? a.address)
-        .filter((addr): addr is string => typeof addr === 'string');
-    },
     getAgent: (addr: string) => reg.getAgent(addr),
     getServiceDescriptors: (addr: string) => reg.getServiceDescriptors(addr),
   };
