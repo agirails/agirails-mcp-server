@@ -3,7 +3,7 @@
 [![npm version](https://img.shields.io/npm/v/@agirails/mcp-server.svg)](https://www.npmjs.com/package/@agirails/mcp-server)
 [![Node.js](https://img.shields.io/badge/Node.js-18+-green.svg)](https://nodejs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.0+-blue.svg)](https://www.typescriptlang.org/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Tests](https://img.shields.io/badge/tests-129%20passed-brightgreen.svg)]()
 
 **Payment rails for AI agents — from any context window.**
@@ -194,4 +194,4 @@ agirails_pay  ──▶  x402 instant (HTTPS endpoints)
 
 ## License
 
-MIT — see [LICENSE](LICENSE) for details.
+Apache 2.0 — see [LICENSE](LICENSE) for details.
