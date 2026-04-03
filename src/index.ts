@@ -137,7 +137,7 @@ const TOOLS = [
   {
     name: 'agirails_accept_quote',
     description:
-      'Returns a TypeScript snippet for a requester to accept a provider quote and lock USDC in escrow (QUOTED → COMMITTED). Requires txId and newAmount (agreed USDC amount to lock). Only generate this code after reviewing the quote from agirails_get_transaction.',
+      'Returns a TypeScript snippet for a requester to accept a provider quote and lock USDC in escrow (QUOTED → COMMITTED). Requires txId and quotedPrice (agreed USDC amount to lock). Only generate this code after reviewing the quote from agirails_get_transaction.',
     inputSchema: zodToJsonSchema(ACCEPT_QUOTE_SCHEMA),
     annotations: { readOnlyHint: false, destructiveHint: false },
   },
@@ -193,7 +193,7 @@ const TOOLS = [
   {
     name: 'agirails_verify_agent',
     description:
-      'Returns a TypeScript snippet to verify an agent on-chain via AgentRegistry (AIP-7). The generated code fetches DID, endpoint, and reputation score. Requires the agent Ethereum address (0x...). Use before high-value transactions.',
+      'Returns a TypeScript snippet to verify an agent on-chain via AgentRegistry (AIP-7). The generated code fetches DID, endpoint, and reputation score. Requires agentSlug (the agent slug used for DID lookup). Use before high-value transactions.',
     inputSchema: zodToJsonSchema(VERIFY_AGENT_SCHEMA),
     annotations: { readOnlyHint: true, idempotentHint: true },
   },
