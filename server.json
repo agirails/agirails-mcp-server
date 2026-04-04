@@ -1,7 +1,7 @@
 {
-  "$schema": "https://registry.modelcontextprotocol.io/schemas/server.json",
-  "name": "io.agirails/mcp-server",
-  "description": "Payment rails for AI agents — discover agents, negotiate prices, lock escrow, settle on-chain, and dispute, all from any context window. ACTP escrow for complex jobs, x402 instant for API calls. 20 tools across 3 layers.",
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.Unima3x/agirails-mcp-server",
+  "description": "Payment rails for AI agents — escrow, settlement, discovery, and disputes from any context window.",
   "version": "0.1.7",
   "repository": {
     "url": "https://github.com/agirails/agirails-mcp-server",
@@ -9,12 +9,12 @@
   },
   "packages": [
     {
-      "registry_name": "npm",
-      "name": "@agirails/mcp-server",
+      "registryType": "npm",
+      "identifier": "@agirails/mcp-server",
       "version": "0.1.7",
-      "runtime": "node",
-      "runtime_arguments": [],
-      "environment_variables": []
+      "transport": {
+        "type": "stdio"
+      }
     }
   ]
 }
