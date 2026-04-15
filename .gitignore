@@ -5,3 +5,6 @@ dist/
 .env
 .env.local
 AGIRAILS.md
+
+# MCP registry credentials — published once, kept local.
+.mcpregistry_*_token
